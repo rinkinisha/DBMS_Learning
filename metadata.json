@@ -1,0 +1,8 @@
+{
+  "name": "DBMS Arena",
+  "description": "Gamified Duolingo-inspired Database Management Systems learning arena with interactive mini-games, live SQL playground, and Gemini AI tutoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
