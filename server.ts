@@ -5,17 +5,13 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { Server as SocketIOServer } from 'socket.io';
-import { GoogleGenAI, Type } from '@google/genai';
+import { queryAll, queryOne } from './server/db.ts';
 import {
-  ensureDailyMissions,
-  getDatabases,
-  initializeStudentPathProgressForUser,
-  queryAll,
-  queryOne,
-  resetPracticeDb,
-  runStmt,
-  saveAppDb,
-} from './server/db.ts';
+  getPracticeDatabase,
+  getStore,
+  resetPracticeDatabase,
+} from './server/store.ts';
+import type { DataStore } from './server/storeTypes.ts';
 import {
   AuthStudentRow,
   clearSessionCookie,
@@ -43,6 +39,11 @@ import {
   LeaderboardPeriod,
   recordXpTransaction,
 } from './server/leaderboardService.ts';
+import {
+  formatGeminiError,
+  generateStructuredAiExplanation,
+  generateTutorChatReply,
+} from './server/geminiService.ts';
 
 const PORT = 3000;
 
@@ -50,70 +51,14 @@ interface AuthedRequest extends Request {
   currentUser?: AuthStudentRow;
 }
 
-function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'GEMINI_API_KEY is not configured. Please add it in the Settings > Secrets panel.'
-    );
-  }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
-
-function incrementMission(
-  appDb: Awaited<ReturnType<typeof getDatabases>>['appDb'],
+async function incrementMission(
+  store: DataStore,
   studentId: number,
   missionKey: string,
   timezone: string = DEFAULT_TIMEZONE
-): { reachedTargetNow: boolean } {
+): Promise<{ reachedTargetNow: boolean; currentCount: number }> {
   const today = getLocalDateIso(new Date(), timezone);
-  ensureDailyMissions(appDb, studentId);
-  const before = queryOne<{ current_count: number; target_count: number }>(
-    appDb,
-    `SELECT current_count, target_count FROM daily_missions
-     WHERE student_id = ? AND mission_key = ? AND mission_date = ?
-     ORDER BY id DESC LIMIT 1`,
-    [studentId, missionKey, today]
-  );
-  appDb.run(
-    `UPDATE daily_missions
-     SET current_count = MIN(target_count, current_count + 1)
-     WHERE student_id = ? AND mission_key = ? AND mission_date = ?`,
-    [studentId, missionKey, today]
-  );
-  saveAppDb();
-  const reachedTargetNow = Boolean(
-    before && before.current_count < before.target_count && before.current_count + 1 >= before.target_count
-  );
-  return { reachedTargetNow };
-}
-
-function awardBadgeIfEligible(
-  appDb: Awaited<ReturnType<typeof getDatabases>>['appDb'],
-  studentId: number,
-  badgeCode: string
-): void {
-  const badge = queryOne<{ id: number }>(appDb, 'SELECT id FROM badges WHERE code = ?', [badgeCode]);
-  if (!badge) return;
-  const existing = queryOne(
-    appDb,
-    'SELECT 1 FROM student_badges WHERE student_id = ? AND badge_id = ?',
-    [studentId, badge.id]
-  );
-  if (!existing) {
-    runStmt(
-      appDb,
-      'INSERT INTO student_badges (student_id, badge_id, earned_at) VALUES (?, ?, ?)',
-      [studentId, badge.id, new Date().toISOString()]
-    );
-  }
+  return store.incrementDailyMission(studentId, missionKey, today);
 }
 
 async function startServer() {
@@ -127,7 +72,8 @@ async function startServer() {
   });
 
   app.use(express.json({ limit: '2mb' }));
-  await getDatabases();
+  await getStore();
+  await getPracticeDatabase();
 
   function broadcastLeaderboardUpdate(triggerStudentId?: number) {
     io.emit('leaderboard:updated', {
@@ -142,11 +88,25 @@ async function startServer() {
     });
   });
 
+  app.get('/api/health', async (_req: Request, res: Response) => {
+    try {
+      const store = await getStore();
+      res.json({
+        ok: true,
+        database: store.status.backend,
+        mongoConfigured: store.status.mongoConfigured,
+        mongoConnected: store.status.mongoConnected,
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
   // ---------------- AUTH MIDDLEWARE ----------------
   async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
     try {
-      const { appDb: db } = await getDatabases();
-      const user = getAuthenticatedUser(db, req);
+      const store = await getStore();
+      const user = await getAuthenticatedUser(store, req);
       if (!user) {
         res.status(401).json({ error: 'Authentication required. Please log in.' });
         return;
@@ -206,23 +166,15 @@ async function startServer() {
         return;
       }
 
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
 
-      const dupEmail = queryOne<{ id: number }>(
-        db,
-        'SELECT id FROM students WHERE LOWER(email) = LOWER(?) LIMIT 1',
-        [trimmedEmail]
-      );
+      const dupEmail = await store.getStudentByEmail(trimmedEmail);
       if (dupEmail) {
         res.status(409).json({ error: 'An account with this email address already exists.' });
         return;
       }
 
-      const dupUsername = queryOne<{ id: number }>(
-        db,
-        'SELECT id FROM students WHERE LOWER(username) = LOWER(?) LIMIT 1',
-        [trimmedUsername]
-      );
+      const dupUsername = await store.getStudentByUsername(trimmedUsername);
       if (dupUsername) {
         res.status(409).json({ error: 'This username is already taken. Please choose another.' });
         return;
@@ -232,37 +184,46 @@ async function startServer() {
       const tz = (timezone ?? DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
       const passwordHash = hashPassword(password!);
 
-      const newId = runStmt(
-        db,
-        `INSERT INTO students (
-           name, username, email, password_hash, avatar_seed,
-           xp, hearts, max_hearts, gems, streak_days, longest_streak,
-           last_active_date, league, weekly_xp, role, is_primary, is_demo,
-           timezone, streak_history_json, sql_solved_count, created_at
-         ) VALUES (?, ?, ?, ?, ?, 0, 5, 5, 0, 0, 0, '', 'Bronze', 0, 'student', 0, 0, ?, '[]', 0, ?)`,
-        [trimmedName, trimmedUsername, trimmedEmail, passwordHash, trimmedUsername.toLowerCase(), tz, nowIso],
-        false
-      );
+      const newId = await store.createStudent({
+        name: trimmedName,
+        username: trimmedUsername,
+        email: trimmedEmail,
+        password_hash: passwordHash,
+        avatar_seed: trimmedUsername.toLowerCase(),
+        xp: 0,
+        hearts: 5,
+        max_hearts: 5,
+        gems: 0,
+        streak_days: 0,
+        longest_streak: 0,
+        last_active_date: '',
+        league: 'Bronze',
+        weekly_xp: 0,
+        role: 'student',
+        is_primary: 0,
+        is_demo: 0,
+        timezone: tz,
+        streak_history_json: '[]',
+        streak_updated_at: null,
+        sql_solved_count: 0,
+        created_at: nowIso,
+      });
 
-      db.run(
-        `INSERT INTO daily_streaks (user_id, current_streak, longest_streak, last_activity_date, streak_history_json, timezone, updated_at)
-         VALUES (?, 0, 0, NULL, '[]', ?, ?)`,
-        [newId, tz, nowIso]
-      );
+      await store.upsertDailyStreak({
+        user_id: newId,
+        current_streak: 0,
+        longest_streak: 0,
+        last_activity_date: null,
+        streak_history_json: '[]',
+        timezone: tz,
+        updated_at: nowIso,
+      });
 
-      initializeStudentPathProgressForUser(db, newId);
-      ensureDailyMissions(db, newId);
+      await store.initializeStudentPathProgress(newId);
+      await store.ensureDailyMissions(newId, getLocalDateIso(new Date(), tz));
 
-      const createdUser = queryOne<AuthStudentRow>(
-        db,
-        `SELECT id, name, username, email, avatar_seed, xp, hearts, max_hearts, gems,
-                streak_days, longest_streak, last_active_date, league, weekly_xp, role,
-                is_demo, timezone, sql_solved_count, created_at
-         FROM students WHERE id = ?`,
-        [newId]
-      )!;
-
-      const token = createUserSession(db, newId);
+      const createdUser = (await store.getStudentById(newId))!;
+      const token = await createUserSession(store, newId);
       setSessionCookie(res, token, req);
       broadcastLeaderboardUpdate(newId);
 
@@ -276,6 +237,26 @@ async function startServer() {
     }
   });
 
+  app.get('/api/auth/session', async (req: Request, res: Response) => {
+    try {
+      const store = await getStore();
+      const user = await getAuthenticatedUser(store, req);
+      if (!user) {
+        res.json({ authenticated: false, user: null, streak: null });
+        return;
+      }
+      const streak = await buildStreakPayload(store, user.id);
+      const refreshed = (await store.getStudentById(user.id))!;
+      res.json({
+        authenticated: true,
+        user: sanitizeUserForClient(refreshed),
+        streak,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.post('/api/auth/login', async (req: Request, res: Response) => {
     try {
       const { email, password, role } = req.body as {
@@ -283,21 +264,24 @@ async function startServer() {
         password?: string;
         role?: 'student' | 'admin';
       };
-      const trimmedEmail = (email ?? '').trim().toLowerCase();
-      if (!trimmedEmail || !password) {
-        res.status(400).json({ error: 'Email address and password are required.' });
+      const identifier = (email ?? '').trim().toLowerCase();
+      if (!identifier || !password) {
+        res.status(400).json({ error: 'Email/username and password are required.' });
         return;
       }
 
-      const { appDb: db } = await getDatabases();
-      const row = queryOne<AuthStudentRow & { password_hash: string | null }>(
-        db,
-        `SELECT * FROM students WHERE LOWER(email) = LOWER(?) LIMIT 1`,
-        [trimmedEmail]
-      );
+      const store = await getStore();
+      let row = await store.getStudentByEmail(identifier);
+      if (!row && role !== 'admin') {
+        row = await store.getStudentByUsername(identifier);
+      }
 
       if (!row || !verifyPassword(password, row.password_hash)) {
-        res.status(401).json({ error: 'Invalid email address or password.' });
+        const msg =
+          role === 'admin'
+            ? 'Invalid administrator email or password. If you configured ADMIN_EMAIL or ADMIN_PASSWORD in Settings > Secrets, use those exact credentials.'
+            : 'Invalid email/username or password.';
+        res.status(401).json({ error: msg });
         return;
       }
 
@@ -310,21 +294,15 @@ async function startServer() {
         return;
       }
 
-      // Logging in NEVER increments streak, only checks if a missed day broke it
-      evaluateAndPersistStreakBreak(db, row.id);
-      initializeStudentPathProgressForUser(db, row.id);
-      ensureDailyMissions(db, row.id);
+      await evaluateAndPersistStreakBreak(store, row.id);
+      await store.initializeStudentPathProgress(row.id);
+      await store.ensureDailyMissions(
+        row.id,
+        getLocalDateIso(new Date(), row.timezone || DEFAULT_TIMEZONE)
+      );
 
-      const refreshed = queryOne<AuthStudentRow>(
-        db,
-        `SELECT id, name, username, email, avatar_seed, xp, hearts, max_hearts, gems,
-                streak_days, longest_streak, last_active_date, league, weekly_xp, role,
-                is_demo, timezone, sql_solved_count, created_at
-         FROM students WHERE id = ?`,
-        [row.id]
-      )!;
-
-      const token = createUserSession(db, row.id);
+      const refreshed = (await store.getStudentById(row.id))!;
+      const token = await createUserSession(store, row.id);
       setSessionCookie(res, token, req);
 
       res.json({
@@ -340,8 +318,8 @@ async function startServer() {
     try {
       const token = extractSessionToken(req);
       if (token) {
-        const { appDb: db } = await getDatabases();
-        deleteUserSession(db, token);
+        const store = await getStore();
+        await deleteUserSession(store, token);
       }
       clearSessionCookie(res, req);
       res.json({ ok: true });
@@ -352,10 +330,10 @@ async function startServer() {
 
   app.get('/api/auth/me', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const user = req.currentUser!;
-      const streak = buildStreakPayload(db, user.id);
-      const refreshed = queryOne<AuthStudentRow>(db, 'SELECT * FROM students WHERE id = ?', [user.id])!;
+      const streak = await buildStreakPayload(store, user.id);
+      const refreshed = (await store.getStudentById(user.id))!;
       res.json({
         user: sanitizeUserForClient(refreshed),
         streak,
@@ -373,16 +351,13 @@ async function startServer() {
         res.status(400).json({ error: eErr });
         return;
       }
-      const { appDb: db } = await getDatabases();
-      const user = queryOne<{ id: number; email: string; is_demo: number; role: string }>(
-        db,
-        'SELECT id, email, is_demo, role FROM students WHERE LOWER(email) = LOWER(?) LIMIT 1',
-        [email!.trim()]
-      );
+      const store = await getStore();
+      const user = await store.getStudentByEmail(email!.trim());
       if (!user || user.is_demo === 1 || user.role === 'admin') {
         res.json({
           ok: true,
-          message: 'If an eligible student account matches that email, a 6-digit recovery code has been issued.',
+          message:
+            'If an eligible student account matches that email, a 6-digit recovery code has been issued.',
         });
         return;
       }
@@ -390,12 +365,13 @@ async function startServer() {
       const code = String(Math.floor(100000 + Math.random() * 900000));
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
-      runStmt(
-        db,
-        `INSERT INTO password_resets (student_id, reset_code, expires_at, used, created_at)
-         VALUES (?, ?, ?, 0, ?)`,
-        [user.id, code, expiresAt, now.toISOString()]
-      );
+      await store.createPasswordReset({
+        student_id: user.id,
+        reset_code: code,
+        expires_at: expiresAt,
+        used: 0,
+        created_at: now.toISOString(),
+      });
 
       res.json({
         ok: true,
@@ -420,35 +396,21 @@ async function startServer() {
         return;
       }
 
-      const { appDb: db } = await getDatabases();
-      const user = queryOne<{ id: number }>(
-        db,
-        'SELECT id FROM students WHERE LOWER(email) = LOWER(?) LIMIT 1',
-        [(email ?? '').trim()]
-      );
+      const store = await getStore();
+      const user = await store.getStudentByEmail((email ?? '').trim());
       if (!user) {
         res.status(400).json({ error: 'Invalid email or recovery code.' });
         return;
       }
 
-      const resetRow = queryOne<{ id: number; expires_at: string; used: number }>(
-        db,
-        `SELECT id, expires_at, used FROM password_resets
-         WHERE student_id = ? AND reset_code = ? AND used = 0
-         ORDER BY id DESC LIMIT 1`,
-        [user.id, (code ?? '').trim()]
-      );
-
+      const resetRow = await store.getLatestValidPasswordReset(user.id, (code ?? '').trim());
       if (!resetRow || new Date(resetRow.expires_at).getTime() <= Date.now()) {
         res.status(400).json({ error: 'Recovery code is invalid or expired.' });
         return;
       }
 
-      db.run('UPDATE password_resets SET used = 1 WHERE id = ?', [resetRow.id]);
-      runStmt(db, 'UPDATE students SET password_hash = ? WHERE id = ?', [
-        hashPassword(newPassword!),
-        user.id,
-      ]);
+      await store.markPasswordResetUsed(resetRow.id);
+      await store.updateStudentFields(user.id, { password_hash: hashPassword(newPassword!) });
 
       res.json({ ok: true, message: 'Password updated cleanly. You can now sign in.' });
     } catch (err) {
@@ -459,73 +421,67 @@ async function startServer() {
   // ---------------- DASHBOARD, STREAK, PROFILE & LEADERBOARD ----------------
   app.get('/api/dashboard', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const studentId = req.currentUser!.id;
-      const streak = buildStreakPayload(db, studentId);
-      const studentRow = queryOne<AuthStudentRow>(db, 'SELECT * FROM students WHERE id = ?', [studentId]);
+      const streak = await buildStreakPayload(store, studentId);
+      const studentRow = await store.getStudentById(studentId);
       if (!studentRow) {
         res.status(404).json({ error: 'Student profile not found' });
         return;
       }
 
-      initializeStudentPathProgressForUser(db, studentId);
-      ensureDailyMissions(db, studentId);
-
-      const unitsRaw = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT u.*, COALESCE(sup.status, 'locked') AS status, sup.assessment_score
-         FROM units u
-         LEFT JOIN student_unit_progress sup ON sup.unit_id = u.id AND sup.student_id = ?
-         ORDER BY u.unit_number ASC`,
-        [studentId]
-      );
-
-      const conceptsRaw = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT c.*, COALESCE(scp.status, 'locked') AS status, scp.best_score, COALESCE(scp.attempts, 0) AS attempts
-         FROM concepts c
-         LEFT JOIN student_concept_progress scp ON scp.concept_id = c.id AND scp.student_id = ?
-         WHERE c.is_published = 1
-         ORDER BY c.unit_id ASC, c.order_index ASC`,
-        [studentId]
-      );
-
-      const units = unitsRaw.map((u) => ({
-        ...u,
-        concepts: conceptsRaw
-          .filter((c) => Number(c.unit_id) === Number(u.id))
-          .map((c) => ({
-            ...c,
-            is_published: Boolean(c.is_published),
-            ai_approved: Boolean(c.ai_approved),
-            diagram_config: JSON.parse(String(c.diagram_config_json || '{}')),
-            lesson_content: JSON.parse(String(c.lesson_content_json || '{}')),
-          })),
-      }));
-
+      await store.initializeStudentPathProgress(studentId);
       const today = getLocalDateIso(new Date(), studentRow.timezone || DEFAULT_TIMEZONE);
-      const missions = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT * FROM daily_missions WHERE student_id = ? AND mission_date = ? ORDER BY id ASC`,
-        [studentId, today]
-      ).map((m) => ({
+      await store.ensureDailyMissions(studentId, today);
+
+      const [unitsRaw, unitProgRows, conceptsRaw, conceptProgRows, missionRows, badgeRows] =
+        await Promise.all([
+          store.getUnits(),
+          store.getStudentUnitProgress(studentId),
+          store.getConcepts({ publishedOnly: true }),
+          store.getStudentConceptProgress(studentId),
+          store.getDailyMissions(studentId, today),
+          store.getStudentBadges(studentId),
+        ]);
+
+      const unitProgMap = new Map(unitProgRows.map((p) => [p.unit_id, p]));
+      const conceptProgMap = new Map(conceptProgRows.map((p) => [p.concept_id, p]));
+
+      const units = unitsRaw.map((u) => {
+        const up = unitProgMap.get(u.id);
+        return {
+          ...u,
+          status: up?.status ?? 'locked',
+          assessment_score: up?.assessment_score ?? null,
+          concepts: conceptsRaw
+            .filter((c) => Number(c.unit_id) === Number(u.id))
+            .map((c) => {
+              const cp = conceptProgMap.get(c.id);
+              return {
+                ...c,
+                status: cp?.status ?? 'locked',
+                best_score: cp?.best_score ?? null,
+                attempts: cp?.attempts ?? 0,
+                is_published: Boolean(c.is_published),
+                ai_approved: Boolean(c.ai_approved),
+                diagram_config: JSON.parse(String(c.diagram_config_json || '{}')),
+                lesson_content: JSON.parse(String(c.lesson_content_json || '{}')),
+              };
+            }),
+        };
+      });
+
+      const missions = missionRows.map((m) => ({
         ...m,
         claimed: Boolean(m.claimed),
       }));
 
-      const badges = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT b.*, sb.earned_at, CASE WHEN sb.badge_id IS NOT NULL THEN 1 ELSE 0 END AS earned
-         FROM badges b
-         LEFT JOIN student_badges sb ON sb.badge_id = b.id AND sb.student_id = ?
-         ORDER BY b.id ASC`,
-        [studentId]
-      ).map((b) => ({
+      const badges = badgeRows.map((b) => ({
         ...b,
         earned: Boolean(b.earned),
       }));
 
-      const lbData = buildDynamicLeaderboard(db, {
+      const lbData = await buildDynamicLeaderboard(store, {
         currentUserId: studentId,
         period: 'weekly',
         page: 1,
@@ -552,8 +508,8 @@ async function startServer() {
 
   app.get('/api/streak', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
-      const payload = buildStreakPayload(db, req.currentUser!.id);
+      const store = await getStore();
+      const payload = await buildStreakPayload(store, req.currentUser!.id);
       res.json(payload);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -562,7 +518,7 @@ async function startServer() {
 
   app.get('/api/leaderboard', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const rawPeriod = String(req.query.period ?? 'weekly');
       const period: LeaderboardPeriod =
         rawPeriod === 'daily' ||
@@ -575,7 +531,7 @@ async function startServer() {
       const page = Number(req.query.page ?? 1);
       const pageSize = Number(req.query.limit ?? 20);
 
-      const data = buildDynamicLeaderboard(db, {
+      const data = await buildDynamicLeaderboard(store, {
         currentUserId: req.currentUser!.id,
         period,
         search,
@@ -590,65 +546,34 @@ async function startServer() {
 
   app.get('/api/profile', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const studentId = req.currentUser!.id;
-      const streak = buildStreakPayload(db, studentId);
-      const student = queryOne<AuthStudentRow>(db, 'SELECT * FROM students WHERE id = ?', [studentId])!;
+      const streak = await buildStreakPayload(store, studentId);
+      const student = (await store.getStudentById(studentId))!;
 
-      const completedConcepts =
-        queryOne<{ c: number }>(
-          db,
-          `SELECT COUNT(*) AS c FROM student_concept_progress scp
-           JOIN concepts con ON con.id = scp.concept_id
-           WHERE scp.student_id = ? AND scp.status = 'completed' AND con.is_published = 1`,
-          [studentId]
-        )?.c ?? 0;
+      const [
+        completedConcepts,
+        totalConcepts,
+        completedUnits,
+        totalUnits,
+        sqlSolved,
+        quizStats,
+        badgeRows,
+        recentXp,
+      ] = await Promise.all([
+        store.countCompletedPublishedConcepts(studentId),
+        store.countPublishedConcepts(),
+        store.countCompletedUnits(studentId),
+        store.countUnits(),
+        store.countDistinctSolvedSql(studentId),
+        store.getStudentQuizStats(studentId),
+        store.getStudentBadges(studentId),
+        store.getRecentXpTransactions(studentId, 12),
+      ]);
 
-      const totalConcepts =
-        queryOne<{ c: number }>(db, 'SELECT COUNT(*) AS c FROM concepts WHERE is_published = 1')?.c ??
-        87;
-
-      const completedUnits =
-        queryOne<{ c: number }>(
-          db,
-          `SELECT COUNT(*) AS c FROM student_unit_progress WHERE student_id = ? AND status = 'completed'`,
-          [studentId]
-        )?.c ?? 0;
-
-      const totalUnits = queryOne<{ c: number }>(db, 'SELECT COUNT(*) AS c FROM units')?.c ?? 4;
-
-      const sqlSolved =
-        queryOne<{ c: number }>(
-          db,
-          `SELECT COUNT(DISTINCT COALESCE(challenge_key, sql_text)) AS c
-           FROM sql_submissions WHERE student_id = ? AND passed = 1`,
-          [studentId]
-        )?.c ?? 0;
-
-      const accuracyRow = queryOne<{ avg_acc: number; total_attempts: number }>(
-        db,
-        `SELECT ROUND(AVG(score), 1) AS avg_acc, COUNT(*) AS total_attempts
-         FROM quiz_attempts WHERE student_id = ?`,
-        [studentId]
-      );
-
-      const badges = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT b.*, sb.earned_at, CASE WHEN sb.badge_id IS NOT NULL THEN 1 ELSE 0 END AS earned
-         FROM badges b
-         LEFT JOIN student_badges sb ON sb.badge_id = b.id AND sb.student_id = ?
-         ORDER BY earned DESC, b.id ASC`,
-        [studentId]
-      ).map((b) => ({ ...b, earned: Boolean(b.earned) }));
-
-      const recentXp = queryAll(
-        db,
-        `SELECT id, source_type, source_ref_id, xp_amount, gems_amount, local_date, created_at
-         FROM xp_transactions
-         WHERE student_id = ?
-         ORDER BY id DESC LIMIT 12`,
-        [studentId]
-      );
+      const badges = badgeRows
+        .map((b) => ({ ...b, earned: Boolean(b.earned) }))
+        .sort((a, b) => Number(b.earned) - Number(a.earned) || a.id - b.id);
 
       res.json({
         user: sanitizeUserForClient(student),
@@ -659,8 +584,8 @@ async function startServer() {
           completedUnits,
           totalUnits,
           sqlSolved: Math.max(student.sql_solved_count ?? 0, sqlSolved),
-          accuracy: accuracyRow?.avg_acc ?? 0,
-          totalQuizAttempts: accuracyRow?.total_attempts ?? 0,
+          accuracy: quizStats.avgAcc,
+          totalQuizAttempts: quizStats.totalAttempts,
         },
         badges,
         recentXp,
@@ -683,21 +608,19 @@ async function startServer() {
         return;
       }
 
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const studentId = req.currentUser!.id;
       const safeAvatar = (avatar_seed ?? req.currentUser!.avatar_seed).trim().slice(0, 40);
       const safeTz = (timezone ?? req.currentUser!.timezone ?? DEFAULT_TIMEZONE).trim();
 
-      runStmt(
-        db,
-        'UPDATE students SET name = ?, avatar_seed = ?, timezone = ? WHERE id = ?',
-        [trimmedName, safeAvatar, safeTz, studentId],
-        false
-      );
-      db.run('UPDATE daily_streaks SET timezone = ? WHERE user_id = ?', [safeTz, studentId]);
-      saveAppDb();
+      await store.updateStudentFields(studentId, {
+        name: trimmedName,
+        avatar_seed: safeAvatar,
+        timezone: safeTz,
+      });
+      await store.updateDailyStreakTimezone(studentId, safeTz);
 
-      const updated = queryOne<AuthStudentRow>(db, 'SELECT * FROM students WHERE id = ?', [studentId])!;
+      const updated = (await store.getStudentById(studentId))!;
       broadcastLeaderboardUpdate(studentId);
       res.json({ user: sanitizeUserForClient(updated) });
     } catch (err) {
@@ -707,13 +630,11 @@ async function startServer() {
 
   app.post('/api/student/lose-heart', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const studentId = req.currentUser!.id;
-      const student = queryOne<{ hearts: number }>(db, 'SELECT hearts FROM students WHERE id = ?', [
-        studentId,
-      ])!;
+      const student = (await store.getStudentById(studentId))!;
       const nextHearts = Math.max(0, Number(student.hearts) - 1);
-      runStmt(db, 'UPDATE students SET hearts = ? WHERE id = ?', [nextHearts, studentId]);
+      await store.updateStudentFields(studentId, { hearts: nextHearts });
       res.json({ hearts: nextHearts });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -722,28 +643,28 @@ async function startServer() {
 
   app.post('/api/student/refill-hearts', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const studentId = req.currentUser!.id;
-      const student = queryOne<{ hearts: number; max_hearts: number; gems: number }>(
-        db,
-        'SELECT hearts, max_hearts, gems FROM students WHERE id = ?',
-        [studentId]
-      )!;
+      const student = (await store.getStudentById(studentId))!;
       if (student.hearts >= student.max_hearts) {
-        res.json({ hearts: student.hearts, gems: student.gems, message: 'Hearts are already full.' });
+        res.json({
+          hearts: student.hearts,
+          gems: student.gems,
+          message: 'Hearts are already full.',
+        });
         return;
       }
       const cost = 25;
       if (student.gems >= cost) {
         const nextGems = student.gems - cost;
-        runStmt(db, 'UPDATE students SET hearts = max_hearts, gems = ? WHERE id = ?', [
-          nextGems,
-          studentId,
-        ]);
+        await store.updateStudentFields(studentId, {
+          hearts: student.max_hearts,
+          gems: nextGems,
+        });
         res.json({ hearts: student.max_hearts, gems: nextGems, message: 'Full hearts restored!' });
       } else {
         const nextHearts = Math.min(student.max_hearts, student.hearts + 1);
-        runStmt(db, 'UPDATE students SET hearts = ? WHERE id = ?', [nextHearts, studentId]);
+        await store.updateStudentFields(studentId, { hearts: nextHearts });
         res.json({
           hearts: nextHearts,
           gems: student.gems,
@@ -758,17 +679,9 @@ async function startServer() {
   app.post('/api/student/claim-mission', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
       const { missionId } = req.body as { missionId: number };
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const studentId = req.currentUser!.id;
-      const mission = queryOne<{
-        id: number;
-        student_id: number;
-        target_count: number;
-        current_count: number;
-        xp_reward: number;
-        gem_reward: number;
-        claimed: number;
-      }>(db, 'SELECT * FROM daily_missions WHERE id = ? AND student_id = ?', [missionId, studentId]);
+      const mission = await store.getDailyMissionById(missionId, studentId);
 
       if (!mission) {
         res.status(404).json({ error: 'Mission not found' });
@@ -783,8 +696,8 @@ async function startServer() {
         return;
       }
 
-      runStmt(db, 'UPDATE daily_missions SET claimed = 1 WHERE id = ?', [missionId], false);
-      const tx = recordXpTransaction(db, {
+      await store.markDailyMissionClaimed(missionId);
+      const tx = await recordXpTransaction(store, {
         studentId,
         sourceType: 'daily_mission',
         sourceRefId: `mission:${missionId}`,
@@ -793,8 +706,8 @@ async function startServer() {
         timezone: req.currentUser!.timezone,
       });
 
-      const streakRes = recordQualifyingStreakActivity(db, studentId);
-      if (tx.newXp >= 500) awardBadgeIfEligible(db, studentId, 'XP_500');
+      const streakRes = await recordQualifyingStreakActivity(store, studentId);
+      if (tx.newXp >= 500) await store.awardBadgeByCode(studentId, 'XP_500');
       broadcastLeaderboardUpdate(studentId);
 
       res.json({
@@ -811,25 +724,17 @@ async function startServer() {
   // ---------------- QUESTIONS & SEQUENTIAL UNLOCK GUARD ----------------
   app.get('/api/concepts/:id/questions', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const conceptId = Number(req.params.id);
       const studentId = req.currentUser!.id;
 
-      const prog = queryOne<{ status: string }>(
-        db,
-        'SELECT status FROM student_concept_progress WHERE student_id = ? AND concept_id = ?',
-        [studentId, conceptId]
-      );
+      const prog = await store.getOneStudentConceptProgress(studentId, conceptId);
       if (!prog || prog.status === 'locked') {
         res.status(403).json({ error: 'This concept is locked. Pass the previous concept first.' });
         return;
       }
 
-      const rows = queryAll<Record<string, unknown>>(
-        db,
-        'SELECT * FROM questions WHERE concept_id = ? AND is_unit_assessment = 0 ORDER BY id ASC',
-        [conceptId]
-      );
+      const rows = await store.getQuestionsForConcept(conceptId);
       res.json(
         rows.map((r) => ({
           ...r,
@@ -844,39 +749,24 @@ async function startServer() {
 
   app.get('/api/units/:id/assessment', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const unitId = Number(req.params.id);
       const studentId = req.currentUser!.id;
 
-      const unitProg = queryOne<{ status: string }>(
-        db,
-        'SELECT status FROM student_unit_progress WHERE student_id = ? AND unit_id = ?',
-        [studentId, unitId]
-      );
+      const unitProg = await store.getOneStudentUnitProgress(studentId, unitId);
       if (!unitProg || unitProg.status === 'locked') {
         res.status(403).json({ error: 'Unit is locked. Pass the previous unit assessment first.' });
         return;
       }
-      const incomplete = queryOne<{ count: number }>(
-        db,
-        `SELECT COUNT(*) AS count
-         FROM concepts c
-         LEFT JOIN student_concept_progress scp ON scp.concept_id = c.id AND scp.student_id = ?
-         WHERE c.unit_id = ? AND c.is_published = 1 AND COALESCE(scp.status, 'locked') != 'completed'`,
-        [studentId, unitId]
-      );
-      if (incomplete && incomplete.count > 0) {
+      const incompleteCount = await store.countIncompleteConceptsInUnit(studentId, unitId);
+      if (incompleteCount > 0) {
         res.status(403).json({
-          error: `Complete all concepts in this unit first (${incomplete.count} remaining).`,
+          error: `Complete all concepts in this unit first (${incompleteCount} remaining).`,
         });
         return;
       }
 
-      const rows = queryAll<Record<string, unknown>>(
-        db,
-        'SELECT * FROM questions WHERE unit_id = ? AND is_unit_assessment = 1 ORDER BY id ASC',
-        [unitId]
-      );
+      const rows = await store.getUnitAssessmentQuestions(unitId);
       res.json(
         rows.map((r) => ({
           ...r,
@@ -897,42 +787,26 @@ async function startServer() {
         isUnitAssessment: boolean;
         score: number;
       };
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const student = req.currentUser!;
       const studentId = student.id;
 
-      // Backend sequential unlock validation
       if (!isUnitAssessment && conceptId) {
-        const currentProg = queryOne<{ status: string }>(
-          db,
-          'SELECT status FROM student_concept_progress WHERE student_id = ? AND concept_id = ?',
-          [studentId, conceptId]
-        );
+        const currentProg = await store.getOneStudentConceptProgress(studentId, conceptId);
         if (!currentProg || currentProg.status === 'locked') {
           res.status(403).json({ error: 'Cannot submit locked concept.' });
           return;
         }
       } else if (isUnitAssessment && unitId) {
-        const uProg = queryOne<{ status: string }>(
-          db,
-          'SELECT status FROM student_unit_progress WHERE student_id = ? AND unit_id = ?',
-          [studentId, unitId]
-        );
+        const uProg = await store.getOneStudentUnitProgress(studentId, unitId);
         if (!uProg || uProg.status === 'locked') {
           res.status(403).json({ error: 'Cannot submit locked unit assessment.' });
           return;
         }
-        const incomplete = queryOne<{ count: number }>(
-          db,
-          `SELECT COUNT(*) AS count
-           FROM concepts c
-           LEFT JOIN student_concept_progress scp ON scp.concept_id = c.id AND scp.student_id = ?
-           WHERE c.unit_id = ? AND c.is_published = 1 AND COALESCE(scp.status, 'locked') != 'completed'`,
-          [studentId, unitId]
-        );
-        if (incomplete && incomplete.count > 0) {
+        const incompleteCount = await store.countIncompleteConceptsInUnit(studentId, unitId);
+        if (incompleteCount > 0) {
           res.status(403).json({
-            error: `Complete all concepts in this unit first (${incomplete.count} remaining).`,
+            error: `Complete all concepts in this unit first (${incompleteCount} remaining).`,
           });
           return;
         }
@@ -948,35 +822,20 @@ async function startServer() {
       let unlockedTitle: string | null = null;
 
       if (!isUnitAssessment && conceptId) {
-        const concept = queryOne<{
-          id: number;
-          unit_id: number;
-          order_index: number;
-          xp_reward: number;
-          gem_reward: number;
-        }>(db, 'SELECT * FROM concepts WHERE id = ?', [conceptId]);
-
-        const prev = queryOne<{ status: string; best_score: number | null; attempts: number }>(
-          db,
-          'SELECT status, best_score, attempts FROM student_concept_progress WHERE student_id = ? AND concept_id = ?',
-          [studentId, conceptId]
-        );
+        const concept = await store.getConceptById(conceptId);
+        const prev = await store.getOneStudentConceptProgress(studentId, conceptId);
 
         const wasAlreadyCompleted = prev?.status === 'completed';
         const bestScore = Math.max(prev?.best_score ?? 0, clampedScore);
         const attempts = (prev?.attempts ?? 0) + 1;
 
         if (passed && concept) {
-          db.run(
-            `INSERT INTO student_concept_progress (student_id, concept_id, status, best_score, attempts, completed_at)
-             VALUES (?, ?, 'completed', ?, ?, ?)
-             ON CONFLICT(student_id, concept_id) DO UPDATE SET
-               status = 'completed',
-               best_score = excluded.best_score,
-               attempts = excluded.attempts,
-               completed_at = excluded.completed_at`,
-            [studentId, conceptId, bestScore, attempts, new Date().toISOString()]
-          );
+          await store.upsertStudentConceptProgress(studentId, conceptId, {
+            status: 'completed',
+            best_score: bestScore,
+            attempts,
+            completed_at: new Date().toISOString(),
+          });
 
           sourceType = wasAlreadyCompleted ? 'concept_replay' : 'concept_pass';
           sourceRefId = `concept:${conceptId}`;
@@ -985,64 +844,40 @@ async function startServer() {
             : concept.xp_reward;
           plannedGems = wasAlreadyCompleted ? 5 : concept.gem_reward;
 
-          const nextConcept = queryOne<{ id: number; title: string }>(
-            db,
-            `SELECT id, title FROM concepts WHERE unit_id = ? AND order_index > ? AND is_published = 1 ORDER BY order_index ASC LIMIT 1`,
-            [concept.unit_id, concept.order_index]
+          const nextConcept = await store.getNextConceptInUnit(
+            concept.unit_id,
+            concept.order_index
           );
-
           if (nextConcept) {
-            const nextProg = queryOne<{ status: string }>(
-              db,
-              'SELECT status FROM student_concept_progress WHERE student_id = ? AND concept_id = ?',
-              [studentId, nextConcept.id]
-            );
+            const nextProg = await store.getOneStudentConceptProgress(studentId, nextConcept.id);
             if (!nextProg || nextProg.status === 'locked') {
-              db.run(
-                `INSERT INTO student_concept_progress (student_id, concept_id, status)
-                 VALUES (?, ?, 'unlocked')
-                 ON CONFLICT(student_id, concept_id) DO UPDATE SET status = 'unlocked'`,
-                [studentId, nextConcept.id]
-              );
+              await store.upsertStudentConceptProgress(studentId, nextConcept.id, {
+                status: 'unlocked',
+              });
               unlockedTitle = nextConcept.title;
             }
           }
 
-          incrementMission(db, studentId, 'complete_concept', student.timezone);
-          awardBadgeIfEligible(db, studentId, 'FIRST_SPARK');
+          await incrementMission(store, studentId, 'complete_concept', student.timezone);
+          await store.awardBadgeByCode(studentId, 'FIRST_SPARK');
         } else {
-          db.run(
-            `INSERT INTO student_concept_progress (student_id, concept_id, status, best_score, attempts)
-             VALUES (?, ?, 'unlocked', ?, ?)
-             ON CONFLICT(student_id, concept_id) DO UPDATE SET
-               best_score = excluded.best_score,
-               attempts = excluded.attempts`,
-            [studentId, conceptId, bestScore, attempts]
-          );
+          await store.upsertStudentConceptProgress(studentId, conceptId, {
+            statusIfNotCompleted: 'unlocked',
+            best_score: bestScore,
+            attempts,
+          });
         }
       } else if (isUnitAssessment && unitId) {
-        const unit = queryOne<{ id: number; unit_number: number; unlock_xp_bonus: number }>(
-          db,
-          'SELECT * FROM units WHERE id = ?',
-          [unitId]
-        );
+        const unit = await store.getUnitById(unitId);
         if (passed && unit) {
-          const prevUnit = queryOne<{ status: string }>(
-            db,
-            'SELECT status FROM student_unit_progress WHERE student_id = ? AND unit_id = ?',
-            [studentId, unitId]
-          );
+          const prevUnit = await store.getOneStudentUnitProgress(studentId, unitId);
           const alreadyDone = prevUnit?.status === 'completed';
 
-          db.run(
-            `INSERT INTO student_unit_progress (student_id, unit_id, status, assessment_score, completed_at)
-             VALUES (?, ?, 'completed', ?, ?)
-             ON CONFLICT(student_id, unit_id) DO UPDATE SET
-               status = 'completed',
-               assessment_score = MAX(COALESCE(assessment_score, 0), excluded.assessment_score),
-               completed_at = excluded.completed_at`,
-            [studentId, unitId, clampedScore, new Date().toISOString()]
-          );
+          await store.upsertStudentUnitProgress(studentId, unitId, {
+            status: 'completed',
+            assessment_score: clampedScore,
+            completed_at: new Date().toISOString(),
+          });
 
           sourceType = alreadyDone ? 'unit_replay' : 'unit_assessment';
           sourceRefId = `unit:${unitId}`;
@@ -1050,35 +885,19 @@ async function startServer() {
           plannedGems = alreadyDone ? 10 : 40;
 
           if (unit.unit_number === 1) {
-            awardBadgeIfEligible(db, studentId, 'UNIT_1_MASTER');
+            await store.awardBadgeByCode(studentId, 'UNIT_1_MASTER');
           }
 
-          const nextUnit = queryOne<{ id: number; title: string }>(
-            db,
-            'SELECT id, title FROM units WHERE unit_number > ? ORDER BY unit_number ASC LIMIT 1',
-            [unit.unit_number]
-          );
+          const nextUnit = await store.getNextUnit(unit.unit_number);
           if (nextUnit) {
-            db.run(
-              `INSERT INTO student_unit_progress (student_id, unit_id, status)
-               VALUES (?, ?, 'unlocked')
-               ON CONFLICT(student_id, unit_id) DO UPDATE SET
-                 status = CASE WHEN status = 'completed' THEN 'completed' ELSE 'unlocked' END`,
-              [studentId, nextUnit.id]
-            );
-            const firstNextConcept = queryOne<{ id: number }>(
-              db,
-              'SELECT id FROM concepts WHERE unit_id = ? AND is_published = 1 ORDER BY order_index ASC LIMIT 1',
-              [nextUnit.id]
-            );
+            await store.upsertStudentUnitProgress(studentId, nextUnit.id, {
+              statusIfNotCompleted: 'unlocked',
+            });
+            const firstNextConcept = await store.getFirstPublishedConceptInUnit(nextUnit.id);
             if (firstNextConcept) {
-              db.run(
-                `INSERT INTO student_concept_progress (student_id, concept_id, status)
-                 VALUES (?, ?, 'unlocked')
-                 ON CONFLICT(student_id, concept_id) DO UPDATE SET
-                   status = CASE WHEN status = 'completed' THEN 'completed' ELSE 'unlocked' END`,
-                [studentId, firstNextConcept.id]
-              );
+              await store.upsertStudentConceptProgress(studentId, firstNextConcept.id, {
+                statusIfNotCompleted: 'unlocked',
+              });
             }
             unlockedTitle = nextUnit.title;
           }
@@ -1091,10 +910,10 @@ async function startServer() {
       let newXp = student.xp;
       let newGems = student.gems;
       let newLeague = student.league;
-      let streakResult: ReturnType<typeof recordQualifyingStreakActivity> | null = null;
+      let streakResult: Awaited<ReturnType<typeof recordQualifyingStreakActivity>> | null = null;
 
       if (passed && plannedXp > 0) {
-        const tx = recordXpTransaction(db, {
+        const tx = await recordXpTransaction(store, {
           studentId,
           sourceType,
           sourceRefId,
@@ -1109,25 +928,20 @@ async function startServer() {
         newGems = tx.newGems;
         newLeague = tx.newLeague;
 
-        if (newXp >= 500) awardBadgeIfEligible(db, studentId, 'XP_500');
-        streakResult = recordQualifyingStreakActivity(db, studentId);
+        if (newXp >= 500) await store.awardBadgeByCode(studentId, 'XP_500');
+        streakResult = await recordQualifyingStreakActivity(store, studentId);
       }
 
-      runStmt(
-        db,
-        `INSERT INTO quiz_attempts (student_id, unit_id, concept_id, is_unit_assessment, score, passed, xp_awarded, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          studentId,
-          unitId,
-          conceptId ?? null,
-          isUnitAssessment ? 1 : 0,
-          clampedScore,
-          passed ? 1 : 0,
-          xpEarned,
-          new Date().toISOString(),
-        ]
-      );
+      await store.insertQuizAttempt({
+        student_id: studentId,
+        unit_id: unitId,
+        concept_id: conceptId ?? null,
+        is_unit_assessment: isUnitAssessment ? 1 : 0,
+        score: clampedScore,
+        passed: passed ? 1 : 0,
+        xp_awarded: xpEarned,
+        created_at: new Date().toISOString(),
+      });
 
       if (passed) {
         broadcastLeaderboardUpdate(studentId);
@@ -1150,10 +964,10 @@ async function startServer() {
     }
   });
 
-  // ---------------- REAL SQL PLAYGROUND ----------------
+  // ---------------- REAL SQL PLAYGROUND (IN-MEMORY SQL.JS SANDBOX) ----------------
   app.get('/api/sql/tables', requireAuth, async (_req: Request, res: Response) => {
     try {
-      const { practiceDb } = await getDatabases();
+      const practiceDb = await getPracticeDatabase();
       const tables = queryAll<{ name: string }>(
         practiceDb,
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC"
@@ -1192,25 +1006,25 @@ async function startServer() {
         return;
       }
 
-      const { appDb: db, practiceDb } = await getDatabases();
+      const [store, practiceDb] = await Promise.all([getStore(), getPracticeDatabase()]);
       const student = req.currentUser!;
       const start = performance.now();
       const results = practiceDb.exec(sql);
       const executionMs = Math.round((performance.now() - start) * 100) / 100;
 
-      const { reachedTargetNow } = incrementMission(db, student.id, 'run_sql', student.timezone);
-      const mission = queryOne<{ current_count: number }>(
-        db,
-        `SELECT current_count FROM daily_missions WHERE student_id = ? AND mission_key = 'run_sql' ORDER BY id DESC LIMIT 1`,
-        [student.id]
+      const { reachedTargetNow, currentCount } = await incrementMission(
+        store,
+        student.id,
+        'run_sql',
+        student.timezone
       );
-      if (mission && mission.current_count >= 3) {
-        awardBadgeIfEligible(db, student.id, 'SQL_STRIKER');
+      if (currentCount >= 3) {
+        await store.awardBadgeByCode(student.id, 'SQL_STRIKER');
       }
 
       let streakRes = null;
       if (reachedTargetNow) {
-        streakRes = recordQualifyingStreakActivity(db, student.id);
+        streakRes = await recordQualifyingStreakActivity(store, student.id);
         broadcastLeaderboardUpdate(student.id);
       }
 
@@ -1254,7 +1068,7 @@ async function startServer() {
         return;
       }
 
-      const { appDb: db, practiceDb } = await getDatabases();
+      const [store, practiceDb] = await Promise.all([getStore(), getPracticeDatabase()]);
       const student = req.currentUser!;
       const start = performance.now();
       const results = practiceDb.exec(sql);
@@ -1279,12 +1093,15 @@ async function startServer() {
       );
 
       if (missingCols.length > 0) {
-        runStmt(
-          db,
-          `INSERT INTO sql_submissions (student_id, concept_id, challenge_key, sql_text, passed, execution_ms, created_at)
-           VALUES (?, ?, ?, ?, 0, ?, ?)`,
-          [student.id, conceptId ?? null, challengeKey ?? null, sql.trim(), executionMs, new Date().toISOString()]
-        );
+        await store.insertSqlSubmission({
+          student_id: student.id,
+          concept_id: conceptId ?? null,
+          challenge_key: challengeKey ?? null,
+          sql_text: sql.trim(),
+          passed: 0,
+          execution_ms: executionMs,
+          created_at: new Date().toISOString(),
+        });
         res.json({
           passed: false,
           columns: last.columns,
@@ -1297,12 +1114,15 @@ async function startServer() {
       }
 
       if (expectedMinRows && last.values.length < expectedMinRows) {
-        runStmt(
-          db,
-          `INSERT INTO sql_submissions (student_id, concept_id, challenge_key, sql_text, passed, execution_ms, created_at)
-           VALUES (?, ?, ?, ?, 0, ?, ?)`,
-          [student.id, conceptId ?? null, challengeKey ?? null, sql.trim(), executionMs, new Date().toISOString()]
-        );
+        await store.insertSqlSubmission({
+          student_id: student.id,
+          concept_id: conceptId ?? null,
+          challenge_key: challengeKey ?? null,
+          sql_text: sql.trim(),
+          passed: 0,
+          execution_ms: executionMs,
+          created_at: new Date().toISOString(),
+        });
         res.json({
           passed: false,
           columns: last.columns,
@@ -1318,25 +1138,21 @@ async function startServer() {
         challengeKey ||
         (conceptId ? `concept_sql:${conceptId}` : `query:${sql.trim().toLowerCase().replace(/\s+/g, ' ')}`);
 
-      const alreadySolved = queryOne<{ id: number }>(
-        db,
-        `SELECT id FROM sql_submissions WHERE student_id = ? AND challenge_key = ? AND passed = 1 LIMIT 1`,
-        [student.id, resolvedKey]
-      );
+      const alreadySolved = await store.hasSolvedSqlChallenge(student.id, resolvedKey);
 
-      runStmt(
-        db,
-        `INSERT INTO sql_submissions (student_id, concept_id, challenge_key, sql_text, passed, execution_ms, created_at)
-         VALUES (?, ?, ?, ?, 1, ?, ?)`,
-        [student.id, conceptId ?? null, resolvedKey, sql.trim(), executionMs, new Date().toISOString()],
-        false
-      );
+      await store.insertSqlSubmission({
+        student_id: student.id,
+        concept_id: conceptId ?? null,
+        challenge_key: resolvedKey,
+        sql_text: sql.trim(),
+        passed: 1,
+        execution_ms: executionMs,
+        created_at: new Date().toISOString(),
+      });
 
       if (!alreadySolved) {
-        db.run('UPDATE students SET sql_solved_count = COALESCE(sql_solved_count, 0) + 1 WHERE id = ?', [
-          student.id,
-        ]);
-        recordXpTransaction(db, {
+        await store.incrementStudentSqlSolved(student.id);
+        await recordXpTransaction(store, {
           studentId: student.id,
           sourceType: 'sql_challenge',
           sourceRefId: resolvedKey,
@@ -1346,7 +1162,7 @@ async function startServer() {
         });
       }
 
-      const streakRes = recordQualifyingStreakActivity(db, student.id);
+      const streakRes = await recordQualifyingStreakActivity(store, student.id);
       broadcastLeaderboardUpdate(student.id);
 
       res.json({
@@ -1365,7 +1181,7 @@ async function startServer() {
 
   app.post('/api/sql/reset', requireAuth, async (_req: Request, res: Response) => {
     try {
-      resetPracticeDb();
+      resetPracticeDatabase();
       res.json({ message: 'Practice database restored to clean University schema.' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1373,72 +1189,11 @@ async function startServer() {
   });
 
   // ---------------- GEMINI AI EXPLAINER & DOUBT ASSISTANT ----------------
-  async function generateStructuredAiExplanation(
-    unitTitle: string,
-    conceptTitle: string,
-    conceptSummary: string
-  ) {
-    const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: `You are teaching inside DBMS Arena.
-Current Unit: "${unitTitle}"
-Current Concept: "${conceptTitle}" (${conceptSummary})
-
-Generate a beginner-friendly, thorough, and strictly on-topic DBMS lesson strictly aligned to "${conceptTitle}" inside "${unitTitle}".
-Practice SQLite tables available for examples: departments(dept_id, dept_name, building, budget), instructors(instructor_id, full_name, email, dept_id, salary), students(student_id, full_name, email, dept_id, year_level, gpa), courses(course_id, course_code, title, credits, dept_id, instructor_id), enrollments(student_id, course_id, semester, grade), projects(project_id, project_name, dept_id, lead_instructor_id, budget).`,
-      config: {
-        systemInstruction:
-          'You are an expert DBMS professor in DBMS Arena. Produce structured, crystal-clear, beginner-friendly explanations strictly scoped to the current unit and concept.',
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            summary: { type: Type.STRING, description: 'Simple beginner-friendly introduction (2-3 sentences).' },
-            formalDefinition: { type: Type.STRING, description: 'Detailed beginner-friendly explanation & definitions.' },
-            realWorldAnalogy: { type: Type.STRING, description: 'Relatable real-world example & analogy.' },
-            workedExample: { type: Type.STRING, description: 'Concrete practical DBMS/SQL example.' },
-            visualSteps: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  step: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  detail: { type: Type.STRING },
-                },
-              },
-            },
-            commonPitfalls: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            quickRecap: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            trySqlQuery: { type: Type.STRING, description: 'Valid SQLite SELECT query on the practice schema.' },
-          },
-        },
-      },
-    });
-    return JSON.parse((response.text ?? '{}').trim());
-  }
-
   app.post('/api/gemini/explain', requireAuth, async (req: Request, res: Response) => {
     try {
       const { conceptId, refresh } = req.body as { conceptId: number; refresh?: boolean };
-      const { appDb: db } = await getDatabases();
-      const concept = queryOne<{
-        id: number;
-        title: string;
-        summary: string;
-        unit_title: string;
-      }>(
-        db,
-        'SELECT c.*, u.title AS unit_title FROM concepts c JOIN units u ON c.unit_id = u.id WHERE c.id = ?',
-        [conceptId]
-      );
+      const store = await getStore();
+      const concept = await store.getConceptById(conceptId);
 
       if (!concept) {
         res.status(404).json({ error: 'Concept not found' });
@@ -1446,13 +1201,9 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
       }
 
       if (!refresh) {
-        const cached = queryOne<{ content_json: string }>(
-          db,
-          'SELECT content_json FROM ai_explanation_cache WHERE concept_id = ? AND style = ?',
-          [conceptId, 'standard']
-        );
+        const cached = await store.getAiExplanationCache(conceptId, 'standard');
         if (cached) {
-          res.json(JSON.parse(cached.content_json));
+          res.json(JSON.parse(cached));
           return;
         }
       }
@@ -1463,18 +1214,11 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         concept.summary
       );
 
-      db.run(
-        `INSERT INTO ai_explanation_cache (concept_id, style, content_json, updated_at)
-         VALUES (?, 'standard', ?, ?)
-         ON CONFLICT(concept_id, style) DO UPDATE SET
-           content_json = excluded.content_json,
-           updated_at = excluded.updated_at`,
-        [conceptId, JSON.stringify(parsed), new Date().toISOString()]
-      );
-      saveAppDb();
+      await store.upsertAiExplanationCache(conceptId, 'standard', JSON.stringify(parsed));
       res.json(parsed);
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      const parsedErr = formatGeminiError(err);
+      res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
     }
   });
 
@@ -1491,60 +1235,31 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         return;
       }
 
-      const ai = getAiClient();
-      const contextLines = [
-        context?.unitTitle ? `Current Unit: ${context.unitTitle}` : null,
-        context?.conceptTitle ? `Current Concept: ${context.conceptTitle}` : null,
-        context?.currentSql ? `Student's SQL Draft:\n${context.currentSql}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const reply = await generateTutorChatReply({ message, history, context });
 
-      const transcript = (history ?? [])
-        .slice(-6)
-        .map((h) => `${h.role === 'user' ? 'Student' : 'Tutor'}: ${h.text}`)
-        .join('\n');
-
-      const prompt = [
-        contextLines ? `Context:\n${contextLines}` : '',
-        transcript ? `Recent Conversation:\n${transcript}` : '',
-        `Student Question: ${message}`,
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: prompt,
-        config: {
-          systemInstruction:
-            'You are Owlbert, the friendly expert DBMS Tutor in DBMS Arena. Always stay aware of the student’s current Unit and Concept. Give concise, structured answers with clear examples, ER notation or SQL snippets when helpful. Available practice tables: departments, instructors, students, courses, enrollments, projects.',
-        },
-      });
-
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
       const student = req.currentUser!;
-      incrementMission(db, student.id, 'ask_tutor', student.timezone);
+      await incrementMission(store, student.id, 'ask_tutor', student.timezone);
 
-      res.json({ reply: response.text ?? 'I could not generate an answer right now.' });
+      res.json({ reply });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      const parsedErr = formatGeminiError(err);
+      res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
     }
   });
 
   // ---------------- ADMIN STUDIO CRUD & AI AUTHORING (ADMIN ONLY) ----------------
   app.get('/api/admin/overview', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
-      const units = queryAll(db, 'SELECT * FROM units ORDER BY unit_number ASC');
-      const conceptsRaw = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT c.*, u.title AS unit_title, u.unit_number,
-                (SELECT COUNT(*) FROM questions q WHERE q.concept_id = c.id) AS question_count
-         FROM concepts c
-         JOIN units u ON c.unit_id = u.id
-         ORDER BY u.unit_number ASC, c.order_index ASC`
-      );
+      const store = await getStore();
+      const [units, conceptsRaw, questionsRaw, allStudents, migrations] = await Promise.all([
+        store.getUnits(),
+        store.getConceptsWithAdminMeta(),
+        store.getAllQuestionsWithContext(),
+        store.getAllStudentsForAdmin(),
+        store.getMigrationLogs(5),
+      ]);
+
       const concepts = conceptsRaw.map((c) => {
         const lessonObj = JSON.parse(String(c.lesson_content_json || '{}'));
         const hasFullLesson = Boolean(
@@ -1563,26 +1278,33 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         };
       });
 
-      const questions = queryAll<Record<string, unknown>>(
-        db,
-        `SELECT q.*, u.unit_number, c.title AS concept_title
-         FROM questions q
-         JOIN units u ON q.unit_id = u.id
-         LEFT JOIN concepts c ON q.concept_id = c.id
-         ORDER BY q.id DESC`
-      ).map((q) => ({
+      const questions = questionsRaw.map((q) => ({
         ...q,
         is_unit_assessment: Boolean(q.is_unit_assessment),
         payload: JSON.parse(String(q.payload_json || '{}')),
       }));
-      const students = queryAll(
-        db,
-        `SELECT id, name, username, email, xp, weekly_xp, hearts, max_hearts, gems, streak_days, longest_streak, league, role, is_demo, is_primary
-         FROM students
-         ORDER BY is_demo ASC, xp DESC`
-      );
-      const migrations = queryAll(db, 'SELECT * FROM migration_audit_log ORDER BY id DESC LIMIT 5');
-      const missingContentCount = concepts.filter((c) => !c.has_full_lesson || Number(c.question_count) < 1).length;
+
+      const students = allStudents.map((s) => ({
+        id: s.id,
+        name: s.name,
+        username: s.username,
+        email: s.email,
+        xp: s.xp,
+        weekly_xp: s.weekly_xp,
+        hearts: s.hearts,
+        max_hearts: s.max_hearts,
+        gems: s.gems,
+        streak_days: s.streak_days,
+        longest_streak: s.longest_streak,
+        league: s.league,
+        role: s.role,
+        is_demo: s.is_demo,
+        is_primary: s.is_primary,
+      }));
+
+      const missingContentCount = concepts.filter(
+        (c) => !c.has_full_lesson || Number(c.question_count) < 1
+      ).length;
 
       res.json({ units, concepts, questions, students, migrations, missingContentCount });
     } catch (err) {
@@ -1592,23 +1314,25 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
 
   app.post('/api/admin/units', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const { unit_number, title, subtitle, description, accent_color, estimated_hours, unlock_xp_bonus } =
-        req.body;
-      const { appDb: db } = await getDatabases();
-      const id = runStmt(
-        db,
-        `INSERT INTO units (unit_number, title, subtitle, description, accent_color, estimated_hours, unlock_xp_bonus)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          Number(unit_number),
-          title,
-          subtitle || `Unit ${unit_number}`,
-          description,
-          accent_color || 'emerald',
-          Number(estimated_hours || 2),
-          Number(unlock_xp_bonus || 150),
-        ]
-      );
+      const {
+        unit_number,
+        title,
+        subtitle,
+        description,
+        accent_color,
+        estimated_hours,
+        unlock_xp_bonus,
+      } = req.body;
+      const store = await getStore();
+      const id = await store.createUnit({
+        unit_number: Number(unit_number),
+        title,
+        subtitle: subtitle || `Unit ${unit_number}`,
+        description,
+        accent_color: accent_color || 'emerald',
+        estimated_hours: Number(estimated_hours || 2),
+        unlock_xp_bonus: Number(unlock_xp_bonus || 150),
+      });
       res.json({ id });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1618,12 +1342,14 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
   app.put('/api/admin/units/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { title, subtitle, description, accent_color, estimated_hours } = req.body;
-      const { appDb: db } = await getDatabases();
-      runStmt(
-        db,
-        `UPDATE units SET title = ?, subtitle = ?, description = ?, accent_color = ?, estimated_hours = ? WHERE id = ?`,
-        [title, subtitle, description, accent_color, Number(estimated_hours || 2), Number(req.params.id)]
-      );
+      const store = await getStore();
+      await store.updateUnit(Number(req.params.id), {
+        title,
+        subtitle,
+        description,
+        accent_color,
+        estimated_hours: Number(estimated_hours || 2),
+      });
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1647,28 +1373,26 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         lesson_content,
         is_published,
       } = req.body;
-      const { appDb: db } = await getDatabases();
-      const id = runStmt(
-        db,
-        `INSERT INTO concepts (unit_id, order_index, topic_tag, title, summary, duration_minutes, xp_reward, gem_reward, definition_text, example_text, diagram_type, diagram_config_json, practical_sql, practical_explanation, lesson_content_json, is_published, ai_approved)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'three_schema', '{}', ?, 'Run this query in the SQL Playground to inspect live rows.', ?, ?, ?)`,
-        [
-          Number(unit_id),
-          Number(order_index || 1),
-          topic_tag || title,
-          title,
-          summary,
-          Number(duration_minutes || 15),
-          Number(xp_reward || 50),
-          Number(gem_reward || 15),
-          definition_text || summary,
-          example_text || summary,
-          practical_sql || 'SELECT * FROM students LIMIT 5;',
-          JSON.stringify(lesson_content ?? {}),
-          is_published === false ? 0 : 1,
-          lesson_content ? 1 : 0,
-        ]
-      );
+      const store = await getStore();
+      const id = await store.createConcept({
+        unit_id: Number(unit_id),
+        order_index: Number(order_index || 1),
+        topic_tag: topic_tag || title,
+        title,
+        summary,
+        duration_minutes: Number(duration_minutes || 15),
+        xp_reward: Number(xp_reward || 50),
+        gem_reward: Number(gem_reward || 15),
+        definition_text: definition_text || summary,
+        example_text: example_text || summary,
+        diagram_type: 'three_schema',
+        diagram_config_json: '{}',
+        practical_sql: practical_sql || 'SELECT * FROM students LIMIT 5;',
+        practical_explanation: 'Run this query in the SQL Playground to inspect live rows.',
+        lesson_content_json: JSON.stringify(lesson_content ?? {}),
+        is_published: is_published === false ? 0 : 1,
+        ai_approved: lesson_content ? 1 : 0,
+      });
       res.json({ id });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1688,25 +1412,18 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         practical_sql,
         lesson_content,
       } = req.body;
-      const { appDb: db } = await getDatabases();
-      runStmt(
-        db,
-        `UPDATE concepts
-         SET title = ?, topic_tag = ?, summary = ?, duration_minutes = ?, xp_reward = ?, definition_text = ?, example_text = ?, practical_sql = ?, lesson_content_json = COALESCE(?, lesson_content_json)
-         WHERE id = ?`,
-        [
-          title,
-          topic_tag || title,
-          summary,
-          Number(duration_minutes || 15),
-          Number(xp_reward || 50),
-          definition_text,
-          example_text,
-          practical_sql,
-          lesson_content ? JSON.stringify(lesson_content) : null,
-          Number(req.params.id),
-        ]
-      );
+      const store = await getStore();
+      await store.updateConcept(Number(req.params.id), {
+        title,
+        topic_tag: topic_tag || title,
+        summary,
+        duration_minutes: Number(duration_minutes || 15),
+        xp_reward: Number(xp_reward || 50),
+        definition_text,
+        example_text,
+        practical_sql,
+        lesson_content_json: lesson_content ? JSON.stringify(lesson_content) : null,
+      });
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1717,35 +1434,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
     try {
       const conceptId = Number(req.params.id);
       const { direction } = req.body as { direction: 'up' | 'down' };
-      const { appDb: db } = await getDatabases();
-      const target = queryOne<{ id: number; unit_id: number; order_index: number }>(
-        db,
-        'SELECT id, unit_id, order_index FROM concepts WHERE id = ?',
-        [conceptId]
-      );
-      if (!target) {
-        res.status(404).json({ error: 'Concept not found' });
-        return;
-      }
-
-      const neighbor =
-        direction === 'up'
-          ? queryOne<{ id: number; order_index: number }>(
-              db,
-              'SELECT id, order_index FROM concepts WHERE unit_id = ? AND order_index < ? ORDER BY order_index DESC LIMIT 1',
-              [target.unit_id, target.order_index]
-            )
-          : queryOne<{ id: number; order_index: number }>(
-              db,
-              'SELECT id, order_index FROM concepts WHERE unit_id = ? AND order_index > ? ORDER BY order_index ASC LIMIT 1',
-              [target.unit_id, target.order_index]
-            );
-
-      if (neighbor) {
-        db.run('UPDATE concepts SET order_index = ? WHERE id = ?', [neighbor.order_index, target.id]);
-        db.run('UPDATE concepts SET order_index = ? WHERE id = ?', [target.order_index, neighbor.id]);
-        saveAppDb();
-      }
+      const store = await getStore();
+      await store.reorderConcept(conceptId, direction);
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1755,11 +1445,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
   app.patch('/api/admin/concepts/:id/publish', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { is_published } = req.body as { is_published: boolean };
-      const { appDb: db } = await getDatabases();
-      runStmt(db, 'UPDATE concepts SET is_published = ? WHERE id = ?', [
-        is_published ? 1 : 0,
-        Number(req.params.id),
-      ]);
+      const store = await getStore();
+      await store.setConceptPublished(Number(req.params.id), Boolean(is_published));
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1769,12 +1456,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
   app.post('/api/admin/concepts/:id/generate-lesson', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const conceptId = Number(req.params.id);
-      const { appDb: db } = await getDatabases();
-      const concept = queryOne<{ id: number; title: string; summary: string; unit_title: string }>(
-        db,
-        'SELECT c.*, u.title AS unit_title FROM concepts c JOIN units u ON c.unit_id = u.id WHERE c.id = ?',
-        [conceptId]
-      );
+      const store = await getStore();
+      const concept = await store.getConceptById(conceptId);
       if (!concept) {
         res.status(404).json({ error: 'Concept not found' });
         return;
@@ -1805,7 +1488,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
 
       res.json({ lessonDraft, trySqlQuery: generated.trySqlQuery });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      const parsedErr = formatGeminiError(err);
+      res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
     }
   });
 
@@ -1813,25 +1497,14 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
     try {
       const conceptId = Number(req.params.id);
       const { lesson_content, practical_sql, publish } = req.body;
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
 
-      runStmt(
-        db,
-        `UPDATE concepts
-         SET lesson_content_json = ?,
-             definition_text = COALESCE(?, definition_text),
-             practical_sql = COALESCE(?, practical_sql),
-             ai_approved = 1,
-             is_published = COALESCE(?, is_published)
-         WHERE id = ?`,
-        [
-          JSON.stringify(lesson_content),
-          lesson_content?.detailedExplanation ?? null,
-          practical_sql ?? null,
-          typeof publish === 'boolean' ? (publish ? 1 : 0) : null,
-          conceptId,
-        ]
-      );
+      await store.approveConceptLesson(conceptId, {
+        lesson_content_json: JSON.stringify(lesson_content),
+        definition_text: lesson_content?.detailedExplanation ?? null,
+        practical_sql: practical_sql ?? null,
+        is_published: typeof publish === 'boolean' ? (publish ? 1 : 0) : null,
+      });
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1840,8 +1513,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
 
   app.delete('/api/admin/concepts/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
-      runStmt(db, 'DELETE FROM concepts WHERE id = ?', [Number(req.params.id)]);
+      const store = await getStore();
+      await store.deleteConcept(Number(req.params.id));
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1852,22 +1525,17 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
     try {
       const { unit_id, concept_id, is_unit_assessment, question_type, prompt, payload, explanation, xp_value } =
         req.body;
-      const { appDb: db } = await getDatabases();
-      const id = runStmt(
-        db,
-        `INSERT INTO questions (unit_id, concept_id, is_unit_assessment, question_type, prompt, payload_json, explanation, xp_value)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          Number(unit_id),
-          concept_id ? Number(concept_id) : null,
-          is_unit_assessment ? 1 : 0,
-          question_type,
-          prompt,
-          JSON.stringify(payload),
-          explanation || 'Great job!',
-          Number(xp_value || 20),
-        ]
-      );
+      const store = await getStore();
+      const id = await store.createQuestion({
+        unit_id: Number(unit_id),
+        concept_id: concept_id ? Number(concept_id) : null,
+        is_unit_assessment: is_unit_assessment ? 1 : 0,
+        question_type,
+        prompt,
+        payload_json: JSON.stringify(payload),
+        explanation: explanation || 'Great job!',
+        xp_value: Number(xp_value || 20),
+      });
       res.json({ id });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1876,8 +1544,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
 
   app.delete('/api/admin/questions/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const { appDb: db } = await getDatabases();
-      runStmt(db, 'DELETE FROM questions WHERE id = ?', [Number(req.params.id)]);
+      const store = await getStore();
+      await store.deleteQuestion(Number(req.params.id));
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -1890,10 +1558,10 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
       const { action } = req.body as {
         action: 'grant_xp' | 'refill_hearts' | 'unlock_all' | 'reset_progress';
       };
-      const { appDb: db } = await getDatabases();
+      const store = await getStore();
 
       if (action === 'grant_xp') {
-        recordXpTransaction(db, {
+        await recordXpTransaction(store, {
           studentId,
           sourceType: 'admin_grant',
           sourceRefId: `admin:${Date.now()}`,
@@ -1902,29 +1570,14 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         });
         broadcastLeaderboardUpdate(studentId);
       } else if (action === 'refill_hearts') {
-        runStmt(db, 'UPDATE students SET hearts = max_hearts WHERE id = ?', [studentId]);
+        const st = await store.getStudentById(studentId);
+        if (st) {
+          await store.updateStudentFields(studentId, { hearts: st.max_hearts });
+        }
       } else if (action === 'unlock_all') {
-        const units = queryAll<{ id: number }>(db, 'SELECT id FROM units');
-        for (const u of units) {
-          db.run(
-            `INSERT INTO student_unit_progress (student_id, unit_id, status) VALUES (?, ?, 'unlocked')
-             ON CONFLICT(student_id, unit_id) DO UPDATE SET status = CASE WHEN status = 'completed' THEN 'completed' ELSE 'unlocked' END`,
-            [studentId, u.id]
-          );
-        }
-        const concepts = queryAll<{ id: number }>(db, 'SELECT id FROM concepts');
-        for (const c of concepts) {
-          db.run(
-            `INSERT INTO student_concept_progress (student_id, concept_id, status) VALUES (?, ?, 'unlocked')
-             ON CONFLICT(student_id, concept_id) DO UPDATE SET status = CASE WHEN status = 'completed' THEN 'completed' ELSE 'unlocked' END`,
-            [studentId, c.id]
-          );
-        }
-        saveAppDb();
+        await store.unlockAllForStudent(studentId);
       } else if (action === 'reset_progress') {
-        db.run('DELETE FROM student_unit_progress WHERE student_id = ?', [studentId]);
-        db.run('DELETE FROM student_concept_progress WHERE student_id = ?', [studentId]);
-        initializeStudentPathProgressForUser(db, studentId);
+        await store.resetStudentPathProgress(studentId);
       }
       res.json({ ok: true });
     } catch (err) {
@@ -1939,12 +1592,8 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         res.status(400).json({ error: 'Cannot delete the currently active admin account.' });
         return;
       }
-      const { appDb: db } = await getDatabases();
-      const target = queryOne<{ id: number; role: string }>(
-        db,
-        'SELECT id, role FROM students WHERE id = ?',
-        [targetId]
-      );
+      const store = await getStore();
+      const target = await store.getStudentById(targetId);
       if (!target) {
         res.status(404).json({ error: 'Student not found.' });
         return;
@@ -1953,17 +1602,7 @@ Practice SQLite tables available for examples: departments(dept_id, dept_name, b
         res.status(403).json({ error: 'Cannot delete administrator accounts.' });
         return;
       }
-      db.run('DELETE FROM sessions WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM password_resets WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM xp_transactions WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM quiz_attempts WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM sql_submissions WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM daily_streaks WHERE user_id = ?', [targetId]);
-      db.run('DELETE FROM student_badges WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM daily_missions WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM student_concept_progress WHERE student_id = ?', [targetId]);
-      db.run('DELETE FROM student_unit_progress WHERE student_id = ?', [targetId]);
-      runStmt(db, 'DELETE FROM students WHERE id = ?', [targetId]);
+      await store.deleteStudentCascade(targetId);
       broadcastLeaderboardUpdate(targetId);
       res.json({ ok: true });
     } catch (err) {

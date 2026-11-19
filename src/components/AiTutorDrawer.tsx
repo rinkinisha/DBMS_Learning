@@ -38,6 +38,7 @@ export function AiTutorDrawer({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastFailedPrompt, setLastFailedPrompt] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -52,15 +53,18 @@ export function AiTutorDrawer({
 
   if (!open) return null;
 
-  const sendMessage = async (textOverride?: string) => {
+  const sendMessage = async (textOverride?: string, skipAppendUser = false) => {
     const content = (textOverride ?? input).trim();
     if (!content || loading) return;
 
-    const nextMessages: ChatMessage[] = [...messages, { role: 'user', text: content }];
-    setMessages(nextMessages);
-    setInput('');
+    const priorHistory = messages.slice(-6);
+    if (!skipAppendUser) {
+      setMessages((prev) => [...prev, { role: 'user', text: content }]);
+      setInput('');
+    }
     setLoading(true);
     setError(null);
+    setLastFailedPrompt(null);
 
     try {
       const res = await apiFetch('/api/gemini/chat', {
@@ -68,7 +72,7 @@ export function AiTutorDrawer({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: content,
-          history: nextMessages.slice(-6),
+          history: priorHistory,
           context,
         }),
       });
@@ -78,6 +82,7 @@ export function AiTutorDrawer({
       await onMissionUpdated();
     } catch (err) {
       setError((err as Error).message);
+      setLastFailedPrompt(content);
     } finally {
       setLoading(false);
     }
@@ -139,8 +144,17 @@ export function AiTutorDrawer({
           )}
 
           {error && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">
-              {error}
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-2">
+              <span>{error}</span>
+              {lastFailedPrompt && (
+                <button
+                  type="button"
+                  onClick={() => sendMessage(lastFailedPrompt, true)}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold shrink-0 cursor-pointer"
+                >
+                  Retry
+                </button>
+              )}
             </div>
           )}
           <div ref={endRef} />

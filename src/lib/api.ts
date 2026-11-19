@@ -5,10 +5,19 @@ let inMemoryToken: string | null = null;
 export function getAuthToken(): string | null {
   if (inMemoryToken) return inMemoryToken;
   try {
-    const stored = sessionStorage.getItem(TOKEN_STORAGE_KEY);
-    if (stored) {
-      inMemoryToken = stored;
-      return stored;
+    const fromLocal = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (fromLocal) {
+      inMemoryToken = fromLocal;
+      return fromLocal;
+    }
+  } catch {
+    // Ignore storage access restrictions inside sandboxed iframes
+  }
+  try {
+    const fromSession = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if (fromSession) {
+      inMemoryToken = fromSession;
+      return fromSession;
     }
   } catch {
     // Ignore storage access restrictions inside sandboxed iframes
@@ -23,6 +32,11 @@ export function setAuthToken(token: string | null | undefined): void {
   }
   inMemoryToken = token;
   try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  } catch {
+    // Ignore storage access restrictions
+  }
+  try {
     sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
   } catch {
     // Ignore storage access restrictions
@@ -31,6 +45,11 @@ export function setAuthToken(token: string | null | undefined): void {
 
 export function clearAuthToken(): void {
   inMemoryToken = null;
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // Ignore storage access restrictions
+  }
   try {
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
   } catch {

@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
-import type { Database } from 'sql.js';
-import { queryOne, runStmt, saveAppDb } from './db.ts';
+import type { DataStore, StudentFullRow } from './storeTypes.ts';
 
 export const SESSION_COOKIE_NAME = 'dbms_arena_session';
 const SESSION_TTL_DAYS = 7;
+
+export type AuthStudentRow = StudentFullRow;
 
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -101,69 +102,39 @@ export function clearSessionCookie(res: Response, req?: Request): void {
   );
 }
 
-export function createUserSession(db: Database, studentId: number): string {
+export async function createUserSession(store: DataStore, studentId: number): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  runStmt(
-    db,
-    `INSERT INTO sessions (token, student_id, expires_at, created_at) VALUES (?, ?, ?, ?)`,
-    [token, studentId, expiresAt, now.toISOString()]
-  );
+  await store.createSession({
+    token,
+    student_id: studentId,
+    expires_at: expiresAt,
+    created_at: now.toISOString(),
+  });
   return token;
 }
 
-export function deleteUserSession(db: Database, token: string): void {
-  db.run('DELETE FROM sessions WHERE token = ?', [token]);
-  saveAppDb();
+export async function deleteUserSession(store: DataStore, token: string): Promise<void> {
+  await store.deleteSession(token);
 }
 
-export interface AuthStudentRow {
-  id: number;
-  name: string;
-  username: string;
-  email: string;
-  avatar_seed: string;
-  xp: number;
-  hearts: number;
-  max_hearts: number;
-  gems: number;
-  streak_days: number;
-  longest_streak: number;
-  last_active_date: string;
-  league: string;
-  weekly_xp: number;
-  role: 'student' | 'admin';
-  is_demo: number;
-  timezone: string;
-  sql_solved_count: number;
-  created_at: string;
-}
-
-export function getAuthenticatedUser(db: Database, req: Request): AuthStudentRow | null {
+export async function getAuthenticatedUser(
+  store: DataStore,
+  req: Request
+): Promise<AuthStudentRow | null> {
   const token = extractSessionToken(req);
   if (!token) return null;
 
-  const session = queryOne<{ token: string; student_id: number; expires_at: string }>(
-    db,
-    'SELECT token, student_id, expires_at FROM sessions WHERE token = ?',
-    [token]
-  );
+  const session = await store.getSessionByToken(token);
   if (!session) return null;
 
   if (new Date(session.expires_at).getTime() <= Date.now()) {
-    deleteUserSession(db, token);
+    await deleteUserSession(store, token);
     return null;
   }
 
-  const user = queryOne<AuthStudentRow>(
-    db,
-    `SELECT id, name, username, email, avatar_seed, xp, hearts, max_hearts, gems,
-            streak_days, longest_streak, last_active_date, league, weekly_xp, role,
-            is_demo, timezone, sql_solved_count, created_at
-     FROM students WHERE id = ?`,
-    [session.student_id]
-  );
+  const user = await store.getStudentById(session.student_id);
   return user ?? null;
 }
 

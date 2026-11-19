@@ -324,17 +324,21 @@ export function AuthPages({ mode, onNavigateMode, onAuthSuccess }: AuthPagesProp
 
               <div className="space-y-1.5">
                 <label htmlFor="login-email" className="block text-xs font-semibold text-slate-700">
-                  {accountRole === 'admin' ? 'Admin Email Address' : 'Email Address'}
+                  {accountRole === 'admin' ? 'Admin Email Address' : 'Email Address or Username'}
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     id="login-email"
-                    type="email"
+                    type={accountRole === 'admin' ? 'email' : 'text'}
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder={accountRole === 'admin' ? 'admin@dbmsarena.edu' : 'student@university.edu'}
+                    placeholder={
+                      accountRole === 'admin'
+                        ? 'admin@dbmsarena.edu'
+                        : 'student@university.edu or username'
+                    }
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-900 focus:outline-none focus:border-emerald-600"
                   />
                 </div>

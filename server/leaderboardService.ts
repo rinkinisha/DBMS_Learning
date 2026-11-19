@@ -1,5 +1,4 @@
-import type { Database } from 'sql.js';
-import { queryAll, queryOne, runStmt, saveAppDb } from './db.ts';
+import type { DataStore } from './storeTypes.ts';
 import {
   DEFAULT_TIMEZONE,
   getLocalDateIso,
@@ -17,8 +16,8 @@ export function computeLeague(xp: number): string {
   return 'Bronze';
 }
 
-export function recordXpTransaction(
-  db: Database,
+export async function recordXpTransaction(
+  store: DataStore,
   params: {
     studentId: number;
     sourceType:
@@ -35,7 +34,7 @@ export function recordXpTransaction(
     timezone?: string;
     now?: Date;
   }
-): {
+): Promise<{
   xpAwarded: number;
   gemsAwarded: number;
   duplicateBlocked: boolean;
@@ -43,27 +42,21 @@ export function recordXpTransaction(
   newWeeklyXp: number;
   newGems: number;
   newLeague: string;
-} {
+}> {
   const now = params.now ?? new Date();
   const tz = params.timezone || DEFAULT_TIMEZONE;
   const localDate = getLocalDateIso(now, tz);
   const createdAt = now.toISOString();
 
-  // Anti-farming: block repeated replay XP for the exact same concept/unit on the same calendar day
   if (params.sourceType === 'concept_replay' || params.sourceType === 'unit_replay') {
-    const existingToday = queryOne<{ id: number }>(
-      db,
-      `SELECT id FROM xp_transactions
-       WHERE student_id = ? AND source_type = ? AND source_ref_id = ? AND local_date = ?
-       LIMIT 1`,
-      [params.studentId, params.sourceType, params.sourceRefId, localDate]
+    const existingToday = await store.hasXpTransaction(
+      params.studentId,
+      params.sourceType,
+      params.sourceRefId,
+      localDate
     );
     if (existingToday) {
-      const st = queryOne<{ xp: number; weekly_xp: number; gems: number; league: string }>(
-        db,
-        'SELECT xp, weekly_xp, gems, league FROM students WHERE id = ?',
-        [params.studentId]
-      )!;
+      const st = (await store.getStudentById(params.studentId))!;
       return {
         xpAwarded: 0,
         gemsAwarded: 0,
@@ -76,26 +69,19 @@ export function recordXpTransaction(
     }
   }
 
-  // Anti-farming: prevent double first-pass XP for same concept or unit or mission
   if (
     params.sourceType === 'concept_pass' ||
     params.sourceType === 'unit_assessment' ||
     params.sourceType === 'daily_mission' ||
     params.sourceType === 'sql_challenge'
   ) {
-    const existingPass = queryOne<{ id: number }>(
-      db,
-      `SELECT id FROM xp_transactions
-       WHERE student_id = ? AND source_type = ? AND source_ref_id = ?
-       LIMIT 1`,
-      [params.studentId, params.sourceType, params.sourceRefId]
+    const existingPass = await store.hasXpTransaction(
+      params.studentId,
+      params.sourceType,
+      params.sourceRefId
     );
     if (existingPass) {
-      const st = queryOne<{ xp: number; weekly_xp: number; gems: number; league: string }>(
-        db,
-        'SELECT xp, weekly_xp, gems, league FROM students WHERE id = ?',
-        [params.studentId]
-      )!;
+      const st = (await store.getStudentById(params.studentId))!;
       return {
         xpAwarded: 0,
         gemsAwarded: 0,
@@ -112,40 +98,31 @@ export function recordXpTransaction(
   const gemsAwarded = Math.max(0, Math.round(params.gemsAmount ?? 0));
 
   if (xpAwarded > 0 || gemsAwarded > 0) {
-    runStmt(
-      db,
-      `INSERT INTO xp_transactions (student_id, source_type, source_ref_id, xp_amount, gems_amount, local_date, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [params.studentId, params.sourceType, params.sourceRefId, xpAwarded, gemsAwarded, localDate, createdAt],
-      false
-    );
+    await store.insertXpTransaction({
+      student_id: params.studentId,
+      source_type: params.sourceType,
+      source_ref_id: params.sourceRefId,
+      xp_amount: xpAwarded,
+      gems_amount: gemsAwarded,
+      local_date: localDate,
+      created_at: createdAt,
+    });
   }
 
-  const st = queryOne<{ xp: number; gems: number }>(
-    db,
-    'SELECT xp, gems FROM students WHERE id = ?',
-    [params.studentId]
-  )!;
+  const st = (await store.getStudentById(params.studentId))!;
   const newXp = st.xp + xpAwarded;
   const newGems = st.gems + gemsAwarded;
   const newLeague = computeLeague(newXp);
 
-  // Recalculate true weekly XP from xp_transactions for current Monday..today window
   const weekStart = getMondayOfWeekIso(localDate);
-  const weekAgg = queryOne<{ w_xp: number }>(
-    db,
-    `SELECT COALESCE(SUM(xp_amount), 0) AS w_xp
-     FROM xp_transactions
-     WHERE student_id = ? AND local_date >= ?`,
-    [params.studentId, weekStart]
-  );
-  const newWeeklyXp = weekAgg?.w_xp ?? 0;
+  const newWeeklyXp = await store.sumStudentXpSince(params.studentId, weekStart);
 
-  runStmt(
-    db,
-    'UPDATE students SET xp = ?, weekly_xp = ?, gems = ?, league = ? WHERE id = ?',
-    [newXp, newWeeklyXp, newGems, newLeague, params.studentId]
-  );
+  await store.updateStudentFields(params.studentId, {
+    xp: newXp,
+    weekly_xp: newWeeklyXp,
+    gems: newGems,
+    league: newLeague,
+  });
 
   return {
     xpAwarded,
@@ -180,8 +157,8 @@ export interface RankedLeaderboardEntry {
   is_current_user: boolean;
 }
 
-export function buildDynamicLeaderboard(
-  db: Database,
+export async function buildDynamicLeaderboard(
+  store: DataStore,
   options: {
     currentUserId: number;
     period?: LeaderboardPeriod;
@@ -199,112 +176,26 @@ export function buildDynamicLeaderboard(
   const weekStart = getMondayOfWeekIso(todayLocal);
   const monthStart = getMonthStartIso(todayLocal);
 
-  const totalConceptsRow = queryOne<{ c: number }>(
-    db,
-    'SELECT COUNT(*) AS c FROM concepts WHERE is_published = 1'
-  );
-  const totalConcepts = totalConceptsRow?.c ?? 87;
-
-  const totalUnitsRow = queryOne<{ c: number }>(db, 'SELECT COUNT(*) AS c FROM units');
-  const totalUnits = totalUnitsRow?.c ?? 4;
-
-  // Fetch all real registered students (even 0 XP!)
-  const students = queryAll<{
-    id: number;
-    name: string;
-    username: string;
-    avatar_seed: string;
-    xp: number;
-    weekly_xp: number;
-    streak_days: number;
-    longest_streak: number;
-    league: string;
-    sql_solved_count: number;
-    created_at: string;
-  }>(
-    db,
-    `SELECT id, name, username, avatar_seed, xp, weekly_xp, streak_days, longest_streak, league, sql_solved_count, created_at
-     FROM students
-     WHERE role = 'student' AND is_demo = 0`
-  );
-
-  // Aggregate period XP from xp_transactions
-  let dateFilter = '';
-  const dateParams: string[] = [];
+  let sinceDate: string | null = null;
+  let isDailyExact = false;
   if (period === 'daily') {
-    dateFilter = 'WHERE local_date = ?';
-    dateParams.push(todayLocal);
+    sinceDate = todayLocal;
+    isDailyExact = true;
   } else if (period === 'weekly') {
-    dateFilter = 'WHERE local_date >= ?';
-    dateParams.push(weekStart);
+    sinceDate = weekStart;
   } else if (period === 'monthly') {
-    dateFilter = 'WHERE local_date >= ?';
-    dateParams.push(monthStart);
+    sinceDate = monthStart;
   }
 
-  const periodRows = queryAll<{ student_id: number; sum_xp: number; achieved_at: string | null }>(
-    db,
-    `SELECT student_id, COALESCE(SUM(xp_amount), 0) AS sum_xp, MAX(created_at) AS achieved_at
-     FROM xp_transactions
-     ${dateFilter}
-     GROUP BY student_id`,
-    dateParams
-  );
-  const periodMap = new Map(periodRows.map((r) => [r.student_id, r]));
+  const agg = await store.getLeaderboardAggregateData(sinceDate, isDailyExact, weekStart);
 
-  const weeklyRows = queryAll<{ student_id: number; sum_xp: number }>(
-    db,
-    `SELECT student_id, COALESCE(SUM(xp_amount), 0) AS sum_xp
-     FROM xp_transactions
-     WHERE local_date >= ?
-     GROUP BY student_id`,
-    [weekStart]
-  );
-  const weeklyMap = new Map(weeklyRows.map((r) => [r.student_id, r.sum_xp]));
-
-  const conceptRows = queryAll<{ student_id: number; c_count: number }>(
-    db,
-    `SELECT scp.student_id, COUNT(*) AS c_count
-     FROM student_concept_progress scp
-     JOIN concepts c ON c.id = scp.concept_id
-     WHERE scp.status = 'completed' AND c.is_published = 1
-     GROUP BY scp.student_id`
-  );
-  const conceptMap = new Map(conceptRows.map((r) => [r.student_id, r.c_count]));
-
-  const unitRows = queryAll<{ student_id: number; u_count: number }>(
-    db,
-    `SELECT student_id, COUNT(*) AS u_count
-     FROM student_unit_progress
-     WHERE status = 'completed'
-     GROUP BY student_id`
-  );
-  const unitMap = new Map(unitRows.map((r) => [r.student_id, r.u_count]));
-
-  const accRows = queryAll<{ student_id: number; avg_score: number }>(
-    db,
-    `SELECT student_id, ROUND(AVG(score), 1) AS avg_score
-     FROM quiz_attempts
-     GROUP BY student_id`
-  );
-  const accMap = new Map(accRows.map((r) => [r.student_id, r.avg_score]));
-
-  const sqlRows = queryAll<{ student_id: number; solved: number }>(
-    db,
-    `SELECT student_id, COUNT(DISTINCT COALESCE(challenge_key, sql_text)) AS solved
-     FROM sql_submissions
-     WHERE passed = 1
-     GROUP BY student_id`
-  );
-  const sqlMap = new Map(sqlRows.map((r) => [r.student_id, r.solved]));
-
-  const combined = students.map((s) => {
-    const pInfo = periodMap.get(s.id);
-    const periodXp = period === 'all_time' ? s.xp : (pInfo?.sum_xp ?? 0);
-    const completedConcepts = conceptMap.get(s.id) ?? 0;
-    const completedUnits = unitMap.get(s.id) ?? 0;
-    const sqlSolved = Math.max(s.sql_solved_count ?? 0, sqlMap.get(s.id) ?? 0);
-    const accuracy = accMap.get(s.id) ?? 0;
+  const combined = agg.students.map((s) => {
+    const pInfo = agg.periodMap.get(s.id);
+    const periodXp = period === 'all_time' ? s.xp : pInfo?.sum_xp ?? 0;
+    const completedConcepts = agg.conceptMap.get(s.id) ?? 0;
+    const completedUnits = agg.unitMap.get(s.id) ?? 0;
+    const sqlSolved = Math.max(s.sql_solved_count ?? 0, agg.sqlMap.get(s.id) ?? 0);
+    const accuracy = agg.accMap.get(s.id) ?? 0;
     const achievedAt = pInfo?.achieved_at ?? s.created_at;
 
     return {
@@ -314,15 +205,15 @@ export function buildDynamicLeaderboard(
       avatar_seed: s.avatar_seed,
       xp: s.xp,
       period_xp: periodXp,
-      weekly_xp: weeklyMap.get(s.id) ?? s.weekly_xp ?? 0,
+      weekly_xp: agg.weeklyMap.get(s.id) ?? s.weekly_xp ?? 0,
       streak_days: s.streak_days,
       longest_streak: Math.max(s.longest_streak ?? 0, s.streak_days),
       completed_concepts: completedConcepts,
-      total_concepts: totalConcepts,
+      total_concepts: agg.totalConcepts,
       completed_units: completedUnits,
-      total_units: totalUnits,
+      total_units: agg.totalUnits,
       unit_completion_pct:
-        totalConcepts > 0 ? Math.round((completedConcepts / totalConcepts) * 100) : 0,
+        agg.totalConcepts > 0 ? Math.round((completedConcepts / agg.totalConcepts) * 100) : 0,
       sql_solved: sqlSolved,
       accuracy,
       league: s.league,
@@ -332,12 +223,6 @@ export function buildDynamicLeaderboard(
     };
   });
 
-  // Sort strictly using tie-breaking specification:
-  // 1. Higher period XP
-  // 2. More concepts completed
-  // 3. More correctly solved SQL queries
-  // 4. Higher assessment accuracy
-  // 5. Earlier achievement of the same score
   combined.sort((a, b) => {
     if (b.period_xp !== a.period_xp) return b.period_xp - a.period_xp;
     if (b.completed_concepts !== a.completed_concepts) {

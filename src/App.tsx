@@ -125,7 +125,7 @@ export default function App() {
     let active = true;
     (async () => {
       try {
-        const res = await apiFetch('/api/auth/me');
+        const res = await apiFetch('/api/auth/session');
         if (!active) return;
         if (!res.ok) {
           clearAuthToken();
@@ -139,6 +139,17 @@ export default function App() {
           return;
         }
         const data = await res.json();
+        if (!data.authenticated || !data.user) {
+          clearAuthToken();
+          setCurrentUser(null);
+          setAuthChecked(true);
+          setLoading(false);
+          const current = pathToView(window.location.pathname);
+          if (current !== 'login' && current !== 'signup') {
+            navigate('login', true);
+          }
+          return;
+        }
         setCurrentUser(data.user);
         setAuthChecked(true);
         const current = pathToView(window.location.pathname);
@@ -165,8 +176,16 @@ export default function App() {
     const socket = io({
       withCredentials: true,
       auth: token ? { token } : undefined,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 2500,
+      reconnectionDelayMax: 10000,
     });
-    socket.emit('leaderboard:subscribe');
+    socket.on('connect', () => {
+      socket.emit('leaderboard:subscribe');
+    });
+    socket.on('connect_error', () => {
+      // Ignore transient network drops silently
+    });
     socket.on('leaderboard:updated', () => {
       fetchDashboard();
     });

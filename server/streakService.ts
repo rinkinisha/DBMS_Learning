@@ -1,5 +1,4 @@
-import type { Database } from 'sql.js';
-import { queryOne, runStmt, saveAppDb } from './db.ts';
+import type { DailyStreakRow, DataStore } from './storeTypes.ts';
 
 export const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
@@ -39,7 +38,7 @@ export function addDaysIso(dateIso: string, deltaDays: number): string {
 export function getMondayOfWeekIso(dateIso: string): string {
   const [y, m, d] = dateIso.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const day = dt.getUTCDay(); // 0 = Sunday, 1 = Monday...
+  const day = dt.getUTCDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
   return addDaysIso(dateIso, diffToMonday);
 }
@@ -63,7 +62,6 @@ export function computeEffectiveStreak(state: StreakState, todayLocal: string): 
   if (state.lastActivityDate === todayLocal || state.lastActivityDate === yesterdayLocal) {
     return state;
   }
-  // Missed at least one complete calendar day
   return {
     ...state,
     currentStreak: 0,
@@ -82,7 +80,6 @@ export function computeNextStreakOnActivity(
   const historySet = new Set(state.streakHistory);
 
   if (state.lastActivityDate === todayLocal) {
-    // Already counted today — duplicate activities must NOT increment streak twice
     historySet.add(todayLocal);
     return {
       next: {
@@ -100,7 +97,6 @@ export function computeNextStreakOnActivity(
   const sortedHistory = Array.from(historySet).sort().slice(-120);
 
   if (state.lastActivityDate === yesterdayLocal) {
-    // Consecutive day!
     const nextCurrent = state.currentStreak + 1;
     const nextLongest = Math.max(state.longestStreak, nextCurrent);
     return {
@@ -115,7 +111,6 @@ export function computeNextStreakOnActivity(
     };
   }
 
-  // First ever activity OR missed a complete calendar day -> starts new streak at 1
   const wasBroken = Boolean(state.lastActivityDate && state.lastActivityDate < yesterdayLocal);
   const nextCurrent = 1;
   const nextLongest = Math.max(state.longestStreak, nextCurrent);
@@ -131,50 +126,18 @@ export function computeNextStreakOnActivity(
   };
 }
 
-function ensureDailyStreakRow(db: Database, studentId: number): {
-  user_id: number;
-  current_streak: number;
-  longest_streak: number;
-  last_activity_date: string | null;
-  streak_history_json: string;
-  timezone: string;
-  updated_at: string;
-} {
-  let row = queryOne<{
-    user_id: number;
-    current_streak: number;
-    longest_streak: number;
-    last_activity_date: string | null;
-    streak_history_json: string;
-    timezone: string;
-    updated_at: string;
-  }>(db, 'SELECT * FROM daily_streaks WHERE user_id = ?', [studentId]);
-
+async function ensureDailyStreakRow(store: DataStore, studentId: number): Promise<DailyStreakRow> {
+  let row = await store.getDailyStreak(studentId);
   if (!row) {
-    const student = queryOne<{
-      streak_days: number;
-      longest_streak: number;
-      last_active_date: string;
-      streak_history_json: string;
-      timezone: string;
-    }>(
-      db,
-      'SELECT streak_days, longest_streak, last_active_date, streak_history_json, timezone FROM students WHERE id = ?',
-      [studentId]
-    );
+    const student = await store.getStudentById(studentId);
     const current = student?.streak_days ?? 0;
     const longest = Math.max(student?.longest_streak ?? 0, current);
     const lastDate = current > 0 && student?.last_active_date ? student.last_active_date : null;
-    const historyJson = student?.streak_history_json || (lastDate ? JSON.stringify([lastDate]) : '[]');
+    const historyJson =
+      student?.streak_history_json || (lastDate ? JSON.stringify([lastDate]) : '[]');
     const tz = student?.timezone || DEFAULT_TIMEZONE;
     const nowIso = new Date().toISOString();
 
-    db.run(
-      `INSERT INTO daily_streaks (user_id, current_streak, longest_streak, last_activity_date, streak_history_json, timezone, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [studentId, current, longest, lastDate, historyJson, tz, nowIso]
-    );
-    saveAppDb();
     row = {
       user_id: studentId,
       current_streak: current,
@@ -184,6 +147,7 @@ function ensureDailyStreakRow(db: Database, studentId: number): {
       timezone: tz,
       updated_at: nowIso,
     };
+    await store.upsertDailyStreak(row);
   }
   return row;
 }
@@ -197,56 +161,30 @@ function parseHistory(jsonStr: string | null | undefined): string[] {
   }
 }
 
-function awardStreakMilestones(db: Database, studentId: number, currentStreak: number): string[] {
+async function awardStreakMilestones(
+  store: DataStore,
+  studentId: number,
+  currentStreak: number
+): Promise<string[]> {
   const newlyAwarded: string[] = [];
   for (const m of STREAK_MILESTONES) {
     if (currentStreak >= m.days) {
-      const badge = queryOne<{ id: number }>(db, 'SELECT id FROM badges WHERE code = ?', [m.code]);
-      if (badge) {
-        const exists = queryOne(
-          db,
-          'SELECT 1 FROM student_badges WHERE student_id = ? AND badge_id = ?',
-          [studentId, badge.id]
-        );
-        if (!exists) {
-          runStmt(
-            db,
-            'INSERT INTO student_badges (student_id, badge_id, earned_at) VALUES (?, ?, ?)',
-            [studentId, badge.id, new Date().toISOString()],
-            false
-          );
-          newlyAwarded.push(m.title);
-        }
-      }
+      const awarded = await store.awardBadgeByCode(studentId, m.code);
+      if (awarded) newlyAwarded.push(m.title);
     }
   }
   if (currentStreak >= 5) {
-    const b5 = queryOne<{ id: number }>(db, 'SELECT id FROM badges WHERE code = ?', ['STREAK_KEEPER']);
-    if (b5) {
-      const exists = queryOne(
-        db,
-        'SELECT 1 FROM student_badges WHERE student_id = ? AND badge_id = ?',
-        [studentId, b5.id]
-      );
-      if (!exists) {
-        runStmt(
-          db,
-          'INSERT INTO student_badges (student_id, badge_id, earned_at) VALUES (?, ?, ?)',
-          [studentId, b5.id, new Date().toISOString()],
-          false
-        );
-      }
-    }
+    await store.awardBadgeByCode(studentId, 'STREAK_KEEPER');
   }
   return newlyAwarded;
 }
 
-export function evaluateAndPersistStreakBreak(
-  db: Database,
+export async function evaluateAndPersistStreakBreak(
+  store: DataStore,
   studentId: number,
   now: Date = new Date()
-): StreakState & { timezone: string } {
-  const row = ensureDailyStreakRow(db, studentId);
+): Promise<StreakState & { timezone: string }> {
+  const row = await ensureDailyStreakRow(store, studentId);
   const tz = row.timezone || DEFAULT_TIMEZONE;
   const todayLocal = getLocalDateIso(now, tz);
   const rawState: StreakState = {
@@ -259,32 +197,32 @@ export function evaluateAndPersistStreakBreak(
   const effective = computeEffectiveStreak(rawState, todayLocal);
   if (effective.currentStreak !== rawState.currentStreak) {
     const nowIso = now.toISOString();
-    db.run(
-      `UPDATE daily_streaks SET current_streak = ?, updated_at = ? WHERE user_id = ?`,
-      [effective.currentStreak, nowIso, studentId]
-    );
-    db.run(
-      `UPDATE students SET streak_days = ?, streak_updated_at = ? WHERE id = ?`,
-      [effective.currentStreak, nowIso, studentId]
-    );
-    saveAppDb();
+    await store.upsertDailyStreak({
+      ...row,
+      current_streak: effective.currentStreak,
+      updated_at: nowIso,
+    });
+    await store.updateStudentFields(studentId, {
+      streak_days: effective.currentStreak,
+      streak_updated_at: nowIso,
+    });
   }
 
   return { ...effective, timezone: tz };
 }
 
-export function recordQualifyingStreakActivity(
-  db: Database,
+export async function recordQualifyingStreakActivity(
+  store: DataStore,
   studentId: number,
   now: Date = new Date()
-): {
+): Promise<{
   currentStreak: number;
   longestStreak: number;
   streakIncreased: boolean;
   wasBrokenAndRestarted: boolean;
   newMilestones: string[];
-} {
-  const row = ensureDailyStreakRow(db, studentId);
+}> {
+  const row = await ensureDailyStreakRow(store, studentId);
   const tz = row.timezone || DEFAULT_TIMEZONE;
   const todayLocal = getLocalDateIso(now, tz);
   const rawState: StreakState = {
@@ -303,29 +241,25 @@ export function recordQualifyingStreakActivity(
   const nowIso = now.toISOString();
   const historyJson = JSON.stringify(next.streakHistory);
 
-  db.run(
-    `UPDATE daily_streaks
-     SET current_streak = ?, longest_streak = ?, last_activity_date = ?, streak_history_json = ?, updated_at = ?
-     WHERE user_id = ?`,
-    [next.currentStreak, next.longestStreak, next.lastActivityDate, historyJson, nowIso, studentId]
-  );
+  await store.upsertDailyStreak({
+    user_id: studentId,
+    current_streak: next.currentStreak,
+    longest_streak: next.longestStreak,
+    last_activity_date: next.lastActivityDate,
+    streak_history_json: historyJson,
+    timezone: tz,
+    updated_at: nowIso,
+  });
 
-  db.run(
-    `UPDATE students
-     SET streak_days = ?, longest_streak = ?, last_active_date = ?, streak_history_json = ?, streak_updated_at = ?
-     WHERE id = ?`,
-    [
-      next.currentStreak,
-      next.longestStreak,
-      next.lastActivityDate ?? '',
-      historyJson,
-      nowIso,
-      studentId,
-    ]
-  );
+  await store.updateStudentFields(studentId, {
+    streak_days: next.currentStreak,
+    longest_streak: next.longestStreak,
+    last_active_date: next.lastActivityDate ?? '',
+    streak_history_json: historyJson,
+    streak_updated_at: nowIso,
+  });
 
-  const newMilestones = awardStreakMilestones(db, studentId, next.currentStreak);
-  saveAppDb();
+  const newMilestones = await awardStreakMilestones(store, studentId, next.currentStreak);
 
   return {
     currentStreak: next.currentStreak,
@@ -368,8 +302,12 @@ const WEEKDAYS = [
   { short: 'Sun', full: 'Sunday' },
 ];
 
-export function buildStreakPayload(db: Database, studentId: number, now: Date = new Date()): StreakPayload {
-  const effective = evaluateAndPersistStreakBreak(db, studentId, now);
+export async function buildStreakPayload(
+  store: DataStore,
+  studentId: number,
+  now: Date = new Date()
+): Promise<StreakPayload> {
+  const effective = await evaluateAndPersistStreakBreak(store, studentId, now);
   const todayDate = getLocalDateIso(now, effective.timezone);
   const historySet = new Set(effective.streakHistory);
   const completedToday = effective.lastActivityDate === todayDate || historySet.has(todayDate);
