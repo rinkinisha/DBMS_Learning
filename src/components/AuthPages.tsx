@@ -185,7 +185,7 @@ export function AuthPages({ mode, onNavigateMode, onAuthSuccess }: AuthPagesProp
             <div className="w-24 h-24 rounded-2xl overflow-hidden border border-slate-700 bg-slate-800">
               <img
                 src="/src/assets/images/mascot_dbms_owl_1795020561133.jpg"
-                alt="Owlbert DBMS Arena mascot"
+                alt="Rinku DBMS Arena mascot"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
               />
@@ -213,7 +213,7 @@ export function AuthPages({ mode, onNavigateMode, onAuthSuccess }: AuthPagesProp
             </div>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Interactive SQL Playground and Gemini AI Doubt Assistant</span>
+              <span>Interactive SQL Playground and AI Doubt Assistant</span>
             </div>
           </div>
         </div>

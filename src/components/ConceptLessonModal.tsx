@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   BookOpen,
-  CheckCircle2,
   Code2,
   GitBranch,
   Heart,
@@ -16,6 +15,7 @@ import { AiExplanation, Concept, Question, SqlExecutionResult, Unit } from '../t
 import { InteractiveDiagram } from './InteractiveDiagram';
 import { MiniGameEngine } from './MiniGameEngine';
 import { apiFetch } from '../lib/api';
+import { FormattedAiText } from './FormattedAiText';
 
 interface ConceptLessonModalProps {
   unit: Unit;
@@ -23,7 +23,7 @@ interface ConceptLessonModalProps {
   isUnitAssessment: boolean;
   hearts: number;
   onClose: () => void;
-  onOpenPlaygroundWithSql: (sql: string) => void;
+  onOpenPlaygroundWithSql: (sql: string, conceptId: number) => void;
   onAskTutor: (prompt: string) => void;
   onLoseHeart: () => Promise<void>;
   onRefillHearts: () => Promise<void>;
@@ -32,6 +32,7 @@ interface ConceptLessonModalProps {
 }
 
 type StageKey = 'brief' | 'diagram' | 'practical' | 'quiz';
+
 
 export function ConceptLessonModal({
   unit,
@@ -58,6 +59,9 @@ export function ConceptLessonModal({
   const [demoResult, setDemoResult] = useState<SqlExecutionResult | null>(null);
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
+  const [practiceSql, setPracticeSql] = useState('');
+  const [practiceFeedback, setPracticeFeedback] = useState('');
+  const [practiceBusy, setPracticeBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -96,10 +100,10 @@ export function ConceptLessonModal({
     setAiLoading(true);
     setAiError(null);
     try {
-      const res = await apiFetch('/api/gemini/explain', {
+      const res = await apiFetch('/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conceptId: concept.id, refresh }),
+        body: JSON.stringify({ conceptId: concept.id, refresh, deepDive: true }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not generate AI explanation');
@@ -111,6 +115,23 @@ export function ConceptLessonModal({
     }
   };
 
+  const submitPractice = async () => {
+    if (!concept || !practiceSql.trim()) return;
+    setPracticeBusy(true);
+    setPracticeFeedback('');
+    try {
+      const res = await apiFetch('/api/ai/practice-review', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conceptId: concept.id, sql: practiceSql }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not review your work');
+      setPracticeFeedback(data.feedback);
+      if (data.result) setDemoResult(data.result);
+    } catch (err) { setPracticeFeedback((err as Error).message); }
+    finally { setPracticeBusy(false); }
+  };
+
   const runDemoSql = async () => {
     if (!concept) return;
     setDemoLoading(true);
@@ -119,7 +140,7 @@ export function ConceptLessonModal({
       const res = await apiFetch('/api/sql/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql: concept.practical_sql }),
+        body: JSON.stringify({ sql: practiceSql }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'SQL execution failed');
@@ -230,26 +251,18 @@ export function ConceptLessonModal({
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
           {stage === 'brief' && concept && (
             <div className="space-y-5">
-              {/* 1. Simple Introduction */}
-              <div className="p-5 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-1.5">
-                <div className="text-xs font-semibold text-emerald-800">01. Simple Introduction</div>
-                <p className="text-slate-900 text-sm sm:text-base leading-relaxed">
-                  {lc?.simpleIntro || concept.summary}
-                </p>
-              </div>
-
-              {/* 2. Detailed Beginner-Friendly Explanation */}
+              {/* Definition */}
               <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-2">
-                <div className="text-xs font-semibold text-sky-700">02. Beginner-Friendly Explanation</div>
+                <div className="text-xs font-semibold text-sky-700">Definition</div>
                 <p className="text-slate-800 text-sm sm:text-base leading-relaxed">
                   {lc?.detailedExplanation || concept.definition_text}
                 </p>
               </div>
 
-              {/* 3. Important Definitions & 4. Real-World Examples */}
+              {/* Key Definition & Real-World Example */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3">
-                  <div className="text-xs font-semibold text-slate-700">03. Key Definitions</div>
+                  <div className="text-xs font-semibold text-slate-700">Key Definition</div>
                   <div className="space-y-2.5">
                     {(lc?.definitions && lc.definitions.length > 0
                       ? lc.definitions
@@ -264,7 +277,7 @@ export function ConceptLessonModal({
                 </div>
 
                 <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3">
-                  <div className="text-xs font-semibold text-slate-700">04. Real-World Examples</div>
+                  <div className="text-xs font-semibold text-slate-700">Real-World Example</div>
                   <ul className="list-disc pl-4 space-y-2 text-sm text-slate-700">
                     {(lc?.realWorldExamples && lc.realWorldExamples.length > 0
                       ? lc.realWorldExamples
@@ -276,8 +289,8 @@ export function ConceptLessonModal({
                 </div>
               </div>
 
-              {/* 7. Common Mistakes & 8. Quick Recap */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Common mistakes */}
+              <div className="grid grid-cols-1 gap-4">
                 <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-2.5">
                   <div className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5" />
@@ -292,20 +305,9 @@ export function ConceptLessonModal({
                   </ul>
                 </div>
 
-                <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-2.5">
-                  <div className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Quick Recap</span>
-                  </div>
-                  <ul className="list-disc pl-4 space-y-1.5 text-xs sm:text-sm text-slate-700">
-                    {(lc?.quickRecap ?? [concept.summary]).map((r, i) => (
-                      <li key={i}>{r}</li>
-                    ))}
-                  </ul>
-                </div>
               </div>
 
-              {/* Gemini AI Deep Dive */}
+              {/* AI Deep Dive */}
               <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -313,7 +315,7 @@ export function ConceptLessonModal({
                       AI Tutor Deep Dive ({concept.title})
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Generate extra analogies and worked SQL examples tailored to {unit.title}.
+                      Get a deeper explanation in simple language, with examples and practical details.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -351,17 +353,9 @@ export function ConceptLessonModal({
                 )}
 
                 {aiData && (
-                  <div className="space-y-4 pt-2 border-t border-slate-100">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200 space-y-1.5">
-                        <div className="text-xs font-semibold text-emerald-800">AI Analogy</div>
-                        <p className="text-sm text-slate-800 leading-relaxed">{aiData.realWorldAnalogy}</p>
-                      </div>
-                      <div className="p-4 rounded-xl bg-sky-50/60 border border-sky-200 space-y-1.5">
-                        <div className="text-xs font-semibold text-sky-800">Worked Example</div>
-                        <p className="text-sm text-slate-800 leading-relaxed">{aiData.workedExample}</p>
-                      </div>
-                    </div>
+                  <div className="p-5 pt-4 border-t border-slate-100">
+                    <h4 className="mb-3 font-display font-semibold text-sm text-slate-800">Deep Dive</h4>
+                    <FormattedAiText content={aiData.deepDiveContent ?? ""} />
                   </div>
                 )}
               </div>
@@ -423,33 +417,35 @@ export function ConceptLessonModal({
               <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="font-display font-bold text-lg text-slate-900">05. Practical Example &amp; Live Demo</h3>
-                    <p className="text-sm text-slate-600">{concept.practical_explanation}</p>
+                    <h3 className="font-display font-bold text-lg text-slate-900">Practical Task</h3>
+                    <p className="text-sm text-slate-600">Write and run a short SQL solution, then submit it for AI feedback.</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => onOpenPlaygroundWithSql(concept.practical_sql)}
+                    onClick={() => onOpenPlaygroundWithSql(concept.practical_sql, concept.id)}
                     className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
                   >
                     Open in SQL Playground
                   </button>
                 </div>
 
-                <pre className="p-4 rounded-xl bg-slate-900 text-emerald-300 font-mono text-xs sm:text-sm overflow-x-auto">
-                  {concept.practical_sql}
-                </pre>
+                <p className="text-sm text-slate-700"><strong>Task:</strong> Write a short SQL query that demonstrates <strong>{concept.title}</strong> using the practice database. Run it to see the result, then submit your query for feedback.</p>
+                <textarea aria-label="Your SQL answer" value={practiceSql} onChange={(e) => setPracticeSql(e.target.value)} placeholder="Write your SQL here..." rows={6} className="w-full p-4 rounded-xl bg-slate-900 text-emerald-300 font-mono text-sm outline-none" />
 
                 <div className="flex items-center gap-3">
-                  <button
+                    <button
                     type="button"
                     onClick={runDemoSql}
                     disabled={demoLoading}
                     className="btn-tactile px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold border-b-4 border-sky-800 flex items-center gap-2 cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5" />
-                    <span>{demoLoading ? 'Running...' : 'Execute Practical Demo'}</span>
+                    <span>{demoLoading ? 'Running...' : 'Run SQL'}</span>
                   </button>
+                  <button type="button" onClick={submitPractice} disabled={practiceBusy || !practiceSql.trim()} className="btn-tactile px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold disabled:opacity-50">{practiceBusy ? 'Getting feedback...' : 'Submit for AI Review'}</button>
                 </div>
+
+                {practiceFeedback && <div className="p-4 rounded-xl bg-sky-50 border border-sky-200 text-sm text-slate-800 whitespace-pre-wrap">{practiceFeedback}</div>}
 
                 {demoError && (
                   <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-mono text-rose-800">

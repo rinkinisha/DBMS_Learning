@@ -2,12 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Award,
   BookOpen,
-  LogOut,
   Settings,
   ShieldAlert,
   Sparkles,
   Terminal,
-  User,
   X,
 } from 'lucide-react';
 import { io } from 'socket.io-client';
@@ -20,10 +18,10 @@ import { LeaguesAndBadges } from './components/LeaguesAndBadges';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AiTutorDrawer } from './components/AiTutorDrawer';
 import { AuthPages } from './components/AuthPages';
-import { StudentProfilePage } from './components/StudentProfilePage';
+import { StudentAccountMenu } from './components/StudentAccountMenu';
 import { apiFetch, clearAuthToken, getAuthToken, setAuthToken } from './lib/api';
 
-type ViewTab = 'learn' | 'sql' | 'leagues' | 'profile' | 'admin';
+type ViewTab = 'learn' | 'sql' | 'leagues' | 'admin';
 
 function pathToView(pathname: string): ViewTab | 'login' | 'signup' {
   const clean = pathname.replace(/\/+$/, '') || '/';
@@ -31,7 +29,6 @@ function pathToView(pathname: string): ViewTab | 'login' | 'signup' {
   if (clean === '/signup') return 'signup';
   if (clean === '/sql') return 'sql';
   if (clean === '/leaderboard' || clean === '/leagues') return 'leagues';
-  if (clean === '/profile') return 'profile';
   if (clean === '/admin') return 'admin';
   return 'learn';
 }
@@ -46,8 +43,6 @@ function viewToPath(view: ViewTab | 'login' | 'signup'): string {
       return '/sql';
     case 'leagues':
       return '/leaderboard';
-    case 'profile':
-      return '/profile';
     case 'admin':
       return '/admin';
     default:
@@ -76,6 +71,7 @@ export default function App() {
   } | null>(null);
 
   const [playgroundInitialSql, setPlaygroundInitialSql] = useState<string | undefined>(undefined);
+  const [playgroundInitialConceptId, setPlaygroundInitialConceptId] = useState<number | undefined>(undefined);
   const [tutorOpen, setTutorOpen] = useState(false);
   const [tutorInitialPrompt, setTutorInitialPrompt] = useState<string | undefined>(undefined);
 
@@ -267,7 +263,6 @@ export default function App() {
     { id: 'learn', label: 'Learn Path', icon: BookOpen },
     { id: 'sql', label: 'SQL Playground', icon: Terminal },
     { id: 'leagues', label: 'Leaderboard', icon: Award },
-    { id: 'profile', label: 'Profile', icon: User },
     ...(isAdmin ? [{ id: 'admin' as const, label: 'Admin Studio', icon: Settings }] : []),
   ];
 
@@ -304,17 +299,10 @@ export default function App() {
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer text-slate-500 hover:text-rose-700 inline-flex items-center gap-1"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Logout</span>
-            </button>
           </nav>
 
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-2">
+            <StudentAccountMenu student={currentUser} onLogout={handleLogout} onUpdated={fetchDashboard} />
             <button
               type="button"
               onClick={() => {
@@ -375,16 +363,10 @@ export default function App() {
                 </div>
                 <div className="lg:col-span-4 lg:sticky lg:top-24">
                   <StudentDashboardSidebar
-                    student={dashboard.student}
                     streak={dashboard.streak}
                     streakCelebrating={streakCelebrating}
                     missions={dashboard.missions}
-                    leaderboard={dashboard.leaderboard}
-                    currentUserRank={dashboard.leaderboardMeta?.currentUserRank ?? null}
-                    onRefillHearts={handleRefillHearts}
                     onClaimMission={handleClaimMission}
-                    onOpenLeagues={() => navigate('leagues')}
-                    onOpenProfile={() => navigate('profile')}
                   />
                 </div>
               </div>
@@ -392,7 +374,9 @@ export default function App() {
 
             {activeView === 'sql' && (
               <SqlPlayground
+                units={dashboard.units}
                 initialSql={playgroundInitialSql}
+                initialConceptId={playgroundInitialConceptId}
                 onAskTutorAboutSql={(currentSql) => {
                   setTutorInitialPrompt(`Can you review or explain this SQL query?\n\n${currentSql}`);
                   setTutorOpen(true);
@@ -403,15 +387,6 @@ export default function App() {
 
             {activeView === 'leagues' && (
               <LeaguesAndBadges student={dashboard.student} badges={dashboard.badges} />
-            )}
-
-            {activeView === 'profile' && (
-              <StudentProfilePage
-                onProfileUpdated={async () => {
-                  await fetchDashboard();
-                }}
-                onLogout={handleLogout}
-              />
             )}
 
             {activeView === 'admin' &&
@@ -442,7 +417,7 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <nav
         className={`md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 grid h-14 ${
-          navItems.length === 5 ? 'grid-cols-5' : 'grid-cols-4'
+          navItems.length === 4 ? 'grid-cols-4' : 'grid-cols-3'
         }`}
       >
         {navItems.map((item) => {
@@ -472,8 +447,9 @@ export default function App() {
           isUnitAssessment={activeLesson.isUnitAssessment}
           hearts={dashboard.student.hearts}
           onClose={() => setActiveLesson(null)}
-          onOpenPlaygroundWithSql={(sql) => {
+          onOpenPlaygroundWithSql={(sql, conceptId) => {
             setPlaygroundInitialSql(sql);
+            setPlaygroundInitialConceptId(conceptId);
             setActiveLesson(null);
             navigate('sql');
           }}
@@ -488,7 +464,7 @@ export default function App() {
         />
       )}
 
-      {/* Gemini AI Doubt Assistant Drawer */}
+      {/* AI Doubt Assistant Drawer */}
       <AiTutorDrawer
         open={tutorOpen}
         initialPrompt={tutorInitialPrompt}

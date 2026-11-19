@@ -182,7 +182,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
         method: 'POST',
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Gemini generation failed');
+      if (!res.ok) throw new Error(json.error || 'AI generation failed');
       setEditLesson(json.lessonDraft);
       if (json.trySqlQuery) setEditSql(json.trySqlQuery);
       setAiDraftReady(true);
@@ -912,7 +912,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
             <div className="p-5 overflow-y-auto space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                 <div className="text-xs text-slate-600">
-                  Use Gemini to draft a fresh 10-part beginner-friendly lesson, then review and approve to persist.
+                  Use AI to draft a fresh 10-part beginner-friendly lesson, then review and approve to persist.
                 </div>
                 <button
                   type="button"

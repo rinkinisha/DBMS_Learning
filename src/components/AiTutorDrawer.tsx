@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send, Sparkles, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { FormattedAiText } from './FormattedAiText';
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -32,7 +33,7 @@ export function AiTutorDrawer({
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'model',
-      text: 'Hi! I am Owlbert, your DBMS Arena Tutor. Ask me anything about ER diagrams, normalization, transactions, or SQL queries.',
+      text: 'Hi! I am Rinku, your DBMS Arena Tutor. Ask me anything about ER diagrams, normalization, transactions, or SQL queries.',
     },
   ]);
   const [input, setInput] = useState('');
@@ -67,7 +68,7 @@ export function AiTutorDrawer({
     setLastFailedPrompt(null);
 
     try {
-      const res = await apiFetch('/api/gemini/chat', {
+      const res = await apiFetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -77,7 +78,7 @@ export function AiTutorDrawer({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gemini AI request failed');
+      if (!res.ok) throw new Error(data.error || 'AI request failed');
       setMessages((prev) => [...prev, { role: 'model', text: data.reply }]);
       await onMissionUpdated();
     } catch (err) {
@@ -96,12 +97,12 @@ export function AiTutorDrawer({
           <div className="flex items-center gap-3">
             <img
               src="/src/assets/images/mascot_dbms_owl_1795020561133.jpg"
-              alt="Owlbert DBMS Tutor"
+              alt="Rinku DBMS Tutor"
               referrerPolicy="no-referrer"
               className="w-10 h-10 rounded-xl object-cover border border-slate-200"
             />
             <div>
-              <h2 className="font-display font-bold text-base text-slate-900">Owlbert AI Tutor</h2>
+              <h2 className="font-display font-bold text-base text-slate-900">Rinku AI Tutor</h2>
               <div className="text-xs text-slate-500">DBMS Doubt Assistant</div>
             </div>
           </div>
@@ -123,13 +124,13 @@ export function AiTutorDrawer({
               className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[85%] p-3.5 rounded-2xl text-sm whitespace-pre-wrap leading-relaxed ${
+                className={`max-w-[85%] p-3.5 rounded-2xl text-sm leading-relaxed ${
                   m.role === 'user'
-                    ? 'bg-emerald-600 text-white rounded-br-sm'
+                    ? 'bg-emerald-600 text-white rounded-br-sm whitespace-pre-wrap'
                     : 'bg-white border border-slate-200 text-slate-800 rounded-bl-sm'
                 }`}
               >
-                {m.text}
+                {m.role === 'model' ? <FormattedAiText content={m.text} /> : m.text}
               </div>
             </div>
           ))}
@@ -138,7 +139,7 @@ export function AiTutorDrawer({
             <div className="flex justify-start">
               <div className="p-3.5 rounded-2xl bg-white border border-slate-200 text-xs text-slate-500 flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
-                <span>Owlbert is thinking...</span>
+                <span>Rinku is thinking...</span>
               </div>
             </div>
           )}

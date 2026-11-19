@@ -1,10 +1,13 @@
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { Server as SocketIOServer } from 'socket.io';
+import { createPracticeDatabaseFromSnapshot, exportPracticeDatabaseSnapshot } from './server/db.ts';
+import { databaseStateFingerprint, normalizedQueryResult, validateSqlAnswer, validateTheoryAnswer } from './server/playgroundValidation.ts';
 import { queryAll, queryOne } from './server/db.ts';
 import {
   getPracticeDatabase,
@@ -40,12 +43,37 @@ import {
   recordXpTransaction,
 } from './server/leaderboardService.ts';
 import {
-  formatGeminiError,
+  formatGroqError,
+  generateDynamicQuestions,
+  generatePlaygroundFeedback,
+  generatePlaygroundSqlChallenge,
+  generatePlaygroundTheoryQuestion,
   generateStructuredAiExplanation,
+  generateTopicSpecificDeepDive,
   generateTutorChatReply,
-} from './server/geminiService.ts';
+  reviewSqlPractice,
+} from './server/groqService.ts';
 
-const PORT = 3000;
+type PlaygroundTheoryType = 'mcq' | 'true_false' | 'fill_blank' | 'matching' | 'scenario';
+interface PlaygroundChallenge {
+  studentId: number;
+  conceptId: number;
+  kind: 'theory' | 'sql';
+  topicTitle: string;
+  prompt: string;
+  hint: string;
+  explanation: string;
+  theoryType?: PlaygroundTheoryType;
+  answer?: Record<string, unknown>;
+  baseSnapshot?: Uint8Array;
+  expectedState?: string;
+  expectedResult?: string;
+  sqlType?: string;
+}
+const playgroundChallenges = new Map<string, PlaygroundChallenge>();
+
+
+const PORT = Number(process.env.PORT || 3000);
 
 interface AuthedRequest extends Request {
   currentUser?: AuthStudentRow;
@@ -734,14 +762,9 @@ async function startServer() {
         return;
       }
 
-      const rows = await store.getQuestionsForConcept(conceptId);
-      res.json(
-        rows.map((r) => ({
-          ...r,
-          is_unit_assessment: Boolean(r.is_unit_assessment),
-          payload: JSON.parse(String(r.payload_json || '{}')),
-        }))
-      );
+      const concept = await store.getConceptById(conceptId);
+      if (!concept) { res.status(404).json({ error: 'Concept not found' }); return; }
+      res.json(await generateDynamicQuestions(concept.unit_title, concept.title, concept.summary));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -766,14 +789,9 @@ async function startServer() {
         return;
       }
 
-      const rows = await store.getUnitAssessmentQuestions(unitId);
-      res.json(
-        rows.map((r) => ({
-          ...r,
-          is_unit_assessment: true,
-          payload: JSON.parse(String(r.payload_json || '{}')),
-        }))
-      );
+      const unit = await store.getUnitById(unitId);
+      if (!unit) { res.status(404).json({ error: 'Unit not found' }); return; }
+      res.json(await generateDynamicQuestions(unit.title, `${unit.title} mastery`, unit.description, 10));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -998,6 +1016,165 @@ async function startServer() {
     }
   });
 
+  app.get('/api/sql/playground/challenge/:conceptId', requireAuth, async (req: AuthedRequest, res: Response) => {
+    try {
+      const conceptId = Number(req.params.conceptId);
+      const kind = req.query.kind === 'sql' ? 'sql' : 'theory';
+      const concept = await (await getStore()).getConceptById(conceptId);
+      if (!concept) { res.status(404).json({ error: 'Curriculum topic not found.' }); return; }
+      const challengeId = randomUUID();
+
+      if (kind === 'theory') {
+        const allowedTypes: PlaygroundTheoryType[] = ['mcq', 'true_false', 'fill_blank', 'matching', 'scenario'];
+        const requestedType = String(req.query.type ?? 'mcq') as PlaygroundTheoryType;
+        const type = allowedTypes.includes(requestedType) ? requestedType : 'mcq';
+        const generated = await generatePlaygroundTheoryQuestion({
+          unitTitle: concept.unit_title,
+          conceptTitle: concept.title,
+          summary: concept.summary,
+          definition: concept.definition_text,
+          example: concept.example_text,
+          type,
+        });
+        const answer: Record<string, unknown> = {};
+        const question: Record<string, unknown> = { prompt: generated.prompt, hint: generated.hint };
+        if (type === 'mcq' || type === 'scenario') {
+          const options = Array.isArray(generated.options) ? generated.options.map(String) : [];
+          const correctIndex = Number(generated.correctIndex);
+          if (options.length !== 4 || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) throw new Error('AI returned an invalid choice question. Please retry.');
+          question.options = options;
+          answer.correctIndex = correctIndex;
+        } else if (type === 'true_false') {
+          if (typeof generated.correctBoolean !== 'boolean') throw new Error('AI returned an invalid true/false question. Please retry.');
+          question.statement = generated.prompt;
+          answer.correctBoolean = generated.correctBoolean;
+        } else if (type === 'fill_blank') {
+          const acceptedAnswers = Array.isArray(generated.acceptedAnswers) ? generated.acceptedAnswers.map(String).filter(Boolean) : [];
+          if (!generated.prompt || acceptedAnswers.length === 0 || !String(generated.prompt).includes('___')) throw new Error('AI returned an invalid fill-in question. Please retry.');
+          answer.acceptedAnswers = acceptedAnswers;
+        } else {
+          const pairs = Array.isArray(generated.pairs) ? generated.pairs as { left: string; right: string }[] : [];
+          if (pairs.length !== 3 || pairs.some((pair) => !pair.left || !pair.right)) throw new Error('AI returned an invalid matching question. Please retry.');
+          question.leftItems = pairs.map((pair) => pair.left);
+          question.rightItems = pairs.map((pair) => pair.right).sort(() => Math.random() - 0.5);
+          answer.pairs = pairs;
+        }
+        playgroundChallenges.set(challengeId, {
+          studentId: req.currentUser!.id, conceptId, kind, topicTitle: concept.title,
+          prompt: String(generated.prompt), hint: String(generated.hint), explanation: String(generated.explanation),
+          theoryType: type, answer,
+        });
+        res.json({ challengeId, kind, type, ...question });
+        return;
+      }
+
+      const practiceDb = await getPracticeDatabase();
+      const tables = queryAll<{ name: string }>(practiceDb, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+      const schema = tables.map(({ name }) => {
+        const cols = queryAll<{ name: string; type: string }>(practiceDb, `PRAGMA table_info('${name.replace(/'/g, "''")}')`);
+        return `${name}(${cols.map((column) => `${column.name} ${column.type}`).join(', ')})`;
+      }).join('; ');
+      const generated = await generatePlaygroundSqlChallenge({
+        unitTitle: concept.unit_title, conceptTitle: concept.title, summary: concept.summary,
+        definition: concept.definition_text, schema,
+      });
+      const solution = generated.solutionSql.trim();
+      const statements = solution.split(';').map((part) => part.trim()).filter(Boolean);
+      if (statements.length !== 1 || !/^(SELECT|WITH|INSERT|UPDATE|DELETE)\b/i.test(solution)) throw new Error('AI returned an unsupported SQL solution. Please retry.');
+      const baseSnapshot = exportPracticeDatabaseSnapshot();
+      const baselineDb = createPracticeDatabaseFromSnapshot(baseSnapshot);
+      const baselineState = databaseStateFingerprint(baselineDb);
+      baselineDb.close();
+      const answerDb = createPracticeDatabaseFromSnapshot(baseSnapshot);
+      let expectedResults: ReturnType<typeof answerDb.exec> | undefined;
+      try { expectedResults = answerDb.exec(solution); }
+      catch (err) { throw new Error(`AI-generated challenge solution was invalid: ${(err as Error).message}`); }
+      const expectedState = databaseStateFingerprint(answerDb);
+      const expectedResult = normalizedQueryResult(expectedResults);
+      answerDb.close();
+      if (!expectedResults?.length && expectedState === baselineState) {
+        throw new Error('AI-generated challenge did not produce a verifiable result. Please retry.');
+      }
+      playgroundChallenges.set(challengeId, {
+        studentId: req.currentUser!.id, conceptId, kind, topicTitle: concept.title,
+        prompt: generated.prompt, hint: generated.hint, explanation: generated.explanation,
+        baseSnapshot, expectedState, expectedResult, sqlType: statements[0].split(/\s+/)[0].toUpperCase(),
+      });
+      res.json({ challengeId, kind, prompt: generated.prompt, starterSql: generated.starterSql, hint: generated.hint });
+    } catch (err) {
+      const aiError = formatGroqError(err);
+      console.error('[Playground challenge failed]', {
+        conceptId: req.params.conceptId,
+        kind: req.query.kind,
+        type: req.query.type,
+        status: aiError.httpStatus,
+        message: (err as Error)?.message || aiError.message,
+      });
+      res.status(aiError.httpStatus >= 400 ? aiError.httpStatus : 500).json({ error: (err as Error).message || aiError.message });
+    }
+  });
+
+  app.post('/api/sql/playground/submit', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const { challengeId, answer, sql } = req.body as { challengeId?: string; answer?: unknown; sql?: string };
+    const challenge = challengeId ? playgroundChallenges.get(challengeId) : undefined;
+    if (!challenge || challenge.studentId !== req.currentUser!.id) { res.status(404).json({ error: 'Challenge expired. Load a new challenge.' }); return; }
+    const store = await getStore();
+    const student = req.currentUser!;
+    let correct = false;
+    let error: string | undefined;
+    let learnerWork = '';
+    let result: { columns: string[]; rows: unknown[][]; rowCount: number; executionMs: number } | null = null;
+
+    if (challenge.kind === 'theory') {
+      const expected = challenge.answer ?? {};
+      learnerWork = JSON.stringify(answer ?? '');
+      correct = validateTheoryAnswer(challenge.theoryType ?? 'mcq', expected, answer);
+      if (!correct) error = 'Review the topic and try another option.';
+    } else {
+      learnerWork = String(sql ?? '').trim();
+      if (!learnerWork) { res.status(400).json({ error: 'Write a SQL answer before submitting.' }); return; }
+      const db = createPracticeDatabaseFromSnapshot(challenge.baseSnapshot!);
+      try {
+        const validation = validateSqlAnswer(db, learnerWork, challenge.expectedState!, challenge.expectedResult!);
+        correct = validation.correct;
+        error = validation.error;
+        result = validation.result;
+      } finally { db.close(); }
+    }
+
+    const feedback = await generatePlaygroundFeedback({
+      conceptTitle: challenge.topicTitle, prompt: challenge.prompt, learnerWork,
+      correct, explanation: challenge.explanation, hint: challenge.hint, error,
+    }).catch(() => correct ? `Correct! ${challenge.explanation}` : `${error || 'Not quite yet.'} Hint: ${challenge.hint}`);
+    let xpAwarded = 0;
+    let gemsAwarded = 0;
+    let duplicateBlocked = false;
+    if (correct) {
+      const sourceRefId = `playground:${challenge.kind}:${challenge.conceptId}:${challenge.kind === 'theory' ? challenge.theoryType : 'sql'}`;
+      const tx = await recordXpTransaction(store, {
+        studentId: student.id, sourceType: 'sql_challenge', sourceRefId,
+        xpAmount: challenge.kind === 'theory' ? 5 : 15,
+        gemsAmount: challenge.kind === 'sql' ? 5 : 0,
+        timezone: student.timezone,
+      });
+      xpAwarded = tx.xpAwarded;
+      gemsAwarded = tx.gemsAwarded;
+      duplicateBlocked = tx.duplicateBlocked;
+      if (challenge.kind === 'sql') {
+        const alreadySolved = await store.hasSolvedSqlChallenge(student.id, sourceRefId);
+        await store.insertSqlSubmission({
+          student_id: student.id, concept_id: challenge.conceptId, challenge_key: sourceRefId,
+          sql_text: learnerWork, passed: 1, execution_ms: result?.executionMs ?? 0, created_at: new Date().toISOString(),
+        });
+        if (!alreadySolved) await store.incrementStudentSqlSolved(student.id);
+      }
+      playgroundChallenges.delete(challengeId!);
+      broadcastLeaderboardUpdate(student.id);
+      if (xpAwarded > 0) await recordQualifyingStreakActivity(store, student.id);
+    }
+    res.json({ correct, feedback, hint: correct ? null : challenge.hint, error: correct ? null : error, result, xpAwarded, gemsAwarded, duplicateBlocked, completed: correct });
+  });
+
   app.post('/api/sql/execute', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
       const { sql } = req.body as { sql: string };
@@ -1188,10 +1365,10 @@ async function startServer() {
     }
   });
 
-  // ---------------- GEMINI AI EXPLAINER & DOUBT ASSISTANT ----------------
-  app.post('/api/gemini/explain', requireAuth, async (req: Request, res: Response) => {
+  // ---------------- CLAUDE AI EXPLAINER & DOUBT ASSISTANT ----------------
+  app.post('/api/ai/explain', requireAuth, async (req: Request, res: Response) => {
     try {
-      const { conceptId, refresh } = req.body as { conceptId: number; refresh?: boolean };
+      const { conceptId, refresh, deepDive } = req.body as { conceptId: number; refresh?: boolean; deepDive?: boolean };
       const store = await getStore();
       const concept = await store.getConceptById(conceptId);
 
@@ -1200,12 +1377,31 @@ async function startServer() {
         return;
       }
 
-      if (!refresh) {
-        const cached = await store.getAiExplanationCache(conceptId, 'standard');
+      if (!refresh && !deepDive) {
+        const cached = await store.getAiExplanationCache(conceptId, 'groq-v1');
         if (cached) {
           res.json(JSON.parse(cached));
           return;
         }
+      }
+
+      if (deepDive) {
+        let lessonContent: Record<string, unknown> = {};
+        try { lessonContent = JSON.parse(concept.lesson_content_json || '{}'); } catch { /* Ignore malformed optional lesson details. */ }
+        const parsed = await generateTopicSpecificDeepDive({
+          unitTitle: concept.unit_title,
+          conceptTitle: concept.title,
+          summary: concept.summary,
+          definition: concept.definition_text,
+          example: concept.example_text,
+          lessonDetails: JSON.stringify({
+            lessonContent,
+            practicalExplanation: concept.practical_explanation,
+            practicalSql: concept.practical_sql,
+          }),
+        });
+        res.json(parsed);
+        return;
       }
 
       const parsed = await generateStructuredAiExplanation(
@@ -1214,15 +1410,43 @@ async function startServer() {
         concept.summary
       );
 
-      await store.upsertAiExplanationCache(conceptId, 'standard', JSON.stringify(parsed));
+      await store.upsertAiExplanationCache(conceptId, 'groq-v1', JSON.stringify(parsed));
       res.json(parsed);
     } catch (err) {
-      const parsedErr = formatGeminiError(err);
+      const parsedErr = formatGroqError(err);
       res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
     }
   });
 
-  app.post('/api/gemini/chat', requireAuth, async (req: AuthedRequest, res: Response) => {
+  app.post('/api/ai/practice-review', requireAuth, async (req: AuthedRequest, res: Response) => {
+    try {
+      const { conceptId, sql } = req.body as { conceptId: number; sql: string };
+      if (typeof sql !== 'string' || !sql.trim()) { res.status(400).json({ error: 'Enter a SQL solution first.' }); return; }
+      const store = await getStore();
+      const concept = await store.getConceptById(Number(conceptId));
+      if (!concept) { res.status(404).json({ error: 'Concept not found' }); return; }
+      const practiceDb = await getPracticeDatabase();
+      const started = Date.now();
+      let result: { columns: string[]; rows: unknown[][]; rowCount: number } | null = null;
+      let execution = '';
+      try {
+        if (!/^\s*(SELECT|WITH)\b/i.test(sql)) throw new Error('For this task, use a SELECT query.');
+        const queryResult = practiceDb.exec(sql.trim());
+        if (queryResult.length) {
+          const first = queryResult[0];
+          result = { columns: first.columns, rows: first.values, rowCount: first.values.length };
+          execution = JSON.stringify(result);
+        } else execution = 'SQL ran successfully and changed the practice database.';
+      } catch (err) { execution = `SQL error: ${(err as Error).message}`; }
+      const feedback = await reviewSqlPractice(concept.title, `Write a short SQL query that demonstrates ${concept.title} using the practice database.`, sql.trim(), execution);
+      res.json({ feedback, result: result ? { ...result, executionMs: Date.now() - started } : null });
+    } catch (err) {
+      const parsedErr = formatGroqError(err);
+      res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
+    }
+  });
+
+  app.post('/api/ai/chat', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
       const { message, history, context } = req.body as {
         message: string;
@@ -1243,7 +1467,7 @@ async function startServer() {
 
       res.json({ reply });
     } catch (err) {
-      const parsedErr = formatGeminiError(err);
+      const parsedErr = formatGroqError(err);
       res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
     }
   });
@@ -1488,7 +1712,7 @@ async function startServer() {
 
       res.json({ lessonDraft, trySqlQuery: generated.trySqlQuery });
     } catch (err) {
-      const parsedErr = formatGeminiError(err);
+      const parsedErr = formatGroqError(err);
       res.status(parsedErr.httpStatus).json({ error: parsedErr.message });
     }
   });

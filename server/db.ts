@@ -721,3 +721,13 @@ export function resetPracticeDb(): Database {
   practiceDb.run(PRACTICE_DB_INIT_SQL);
   return practiceDb;
 }
+
+export function exportPracticeDatabaseSnapshot(): Uint8Array {
+  if (!practiceDb) throw new Error('Practice database is not initialized.');
+  return practiceDb.export();
+}
+
+export function createPracticeDatabaseFromSnapshot(snapshot: Uint8Array): Database {
+  if (!SQL) throw new Error('SQL engine is not initialized.');
+  return new SQL.Database(snapshot);
+}

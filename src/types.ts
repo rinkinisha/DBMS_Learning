@@ -198,6 +198,7 @@ export interface ProfilePayload {
 }
 
 export interface AiExplanation {
+  deepDiveContent?: string;
   summary: string;
   formalDefinition: string;
   realWorldAnalogy: string;
