@@ -4,19 +4,20 @@ import path from 'path';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import {
   CURRICULUM_VERSION,
-  PRACTICE_DB_INIT_SQL,
   SEED_BADGES,
   SEED_CONCEPTS,
   SEED_QUESTIONS,
   SEED_UNITS,
 } from './seedData.ts';
+import { PracticeDatabaseManager } from './practiceDatabase.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const APP_DB_PATH = path.join(DATA_DIR, 'dbms_arena.sqlite');
+const PRACTICE_DB_DIR = path.join(DATA_DIR, 'practice');
 
 let SQL: SqlJsStatic | null = null;
 let appDb: Database | null = null;
-let practiceDb: Database | null = null;
+let practiceDatabaseManager: PracticeDatabaseManager | null = null;
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -124,6 +125,9 @@ function ensureStudentAndActivitySchema(db: Database): void {
   if (!colNames.has('sql_solved_count')) {
     db.run('ALTER TABLE students ADD COLUMN sql_solved_count INTEGER NOT NULL DEFAULT 0');
   }
+  if (!colNames.has('discord_user_id')) {
+    db.run('ALTER TABLE students ADD COLUMN discord_user_id TEXT');
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -154,6 +158,19 @@ function ensureStudentAndActivitySchema(db: Database): void {
       local_date TEXT NOT NULL,
       created_at TEXT NOT NULL,
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS discord_announcement_history (
+      local_date TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      winners_json TEXT NOT NULL,
+      concepts_completed INTEGER NOT NULL DEFAULT 0,
+      xp_earned INTEGER NOT NULL DEFAULT 0,
+      message TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      sent_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS quiz_attempts (
@@ -264,12 +281,24 @@ function ensureStudentAndActivitySchema(db: Database): void {
       ],
       false
     );
-  } else if (process.env.ADMIN_PASSWORD) {
-    db.run('UPDATE students SET email = ?, password_hash = ? WHERE id = ?', [
-      adminEmail,
-      hashSeedPassword(adminPassword),
-      adminExists.id,
-    ]);
+  } else {
+    // Apply only explicitly configured values to an existing admin. This lets
+    // deployments rotate either credential independently without resetting
+    // the other one to its default.
+    const updates: string[] = [];
+    const values: (string | number | null)[] = [];
+    if (process.env.ADMIN_EMAIL?.trim()) {
+      updates.push('email = ?');
+      values.push(adminEmail);
+    }
+    if (process.env.ADMIN_PASSWORD) {
+      updates.push('password_hash = ?');
+      values.push(hashSeedPassword(adminPassword));
+    }
+    if (updates.length > 0) {
+      values.push(adminExists.id);
+      db.run(`UPDATE students SET ${updates.join(', ')} WHERE id = ?`, values);
+    }
   }
 
   saveAppDb();
@@ -687,7 +716,7 @@ export function ensureDailyMissions(db: Database, studentId: number): void {
   saveAppDb();
 }
 
-export async function getDatabases(): Promise<{ appDb: Database; practiceDb: Database }> {
+export async function getDatabases(): Promise<{ appDb: Database }> {
   if (!SQL) {
     SQL = await initSqlJs({
       locateFile: (file: string) => path.resolve(process.cwd(), 'node_modules/sql.js/dist', file),
@@ -706,28 +735,33 @@ export async function getDatabases(): Promise<{ appDb: Database; practiceDb: Dat
     migrateCurriculumIfNeeded(appDb);
     ensureStudentAndActivitySchema(appDb);
   }
-
-  if (!practiceDb) {
-    practiceDb = new SQL.Database();
-    practiceDb.run(PRACTICE_DB_INIT_SQL);
-  }
-
-  return { appDb, practiceDb };
+  practiceDatabaseManager ??= new PracticeDatabaseManager(SQL, PRACTICE_DB_DIR);
+  return { appDb };
 }
 
-export function resetPracticeDb(): Database {
-  if (!SQL) throw new Error('SQL.js not initialized');
-  practiceDb = new SQL.Database();
-  practiceDb.run(PRACTICE_DB_INIT_SQL);
-  return practiceDb;
+export function getPracticeDatabaseForStudent(studentId: number): Database {
+  if (!practiceDatabaseManager) throw new Error('Practice database manager is not initialized.');
+  return practiceDatabaseManager.get(studentId);
 }
 
-export function exportPracticeDatabaseSnapshot(): Uint8Array {
-  if (!practiceDb) throw new Error('Practice database is not initialized.');
-  return practiceDb.export();
+export function savePracticeDatabaseForStudent(studentId: number): void {
+  if (!practiceDatabaseManager) throw new Error('Practice database manager is not initialized.');
+  practiceDatabaseManager.save(studentId);
+}
+
+export function resetPracticeDb(studentId: number): Database {
+  if (!practiceDatabaseManager) throw new Error('Practice database manager is not initialized.');
+  return practiceDatabaseManager.reset(studentId);
+}
+
+export function exportPracticeDatabaseSnapshot(studentId: number): Uint8Array {
+  if (!practiceDatabaseManager) throw new Error('Practice database manager is not initialized.');
+  return practiceDatabaseManager.get(studentId).export();
 }
 
 export function createPracticeDatabaseFromSnapshot(snapshot: Uint8Array): Database {
   if (!SQL) throw new Error('SQL engine is not initialized.');
-  return new SQL.Database(snapshot);
+  const database = new SQL.Database(snapshot);
+  database.run('PRAGMA foreign_keys = ON');
+  return database;
 }

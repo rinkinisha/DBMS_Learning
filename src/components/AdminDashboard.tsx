@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  Trophy,
   Unlock,
   Users,
   X,
@@ -64,6 +65,7 @@ interface AdminOverview {
     question_type: string;
     prompt: string;
     xp_value: number;
+    payload?: Record<string, unknown>;
   }[];
   students: {
     id: number;
@@ -94,26 +96,53 @@ interface AdminDashboardProps {
   onDashboardRefresh: () => Promise<void>;
 }
 
+function linesToList(value: string): string[] {
+  return value.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+function listToLines(value: string[] | undefined): string {
+  return (value ?? []).join('\n');
+}
+
+function visualStepsToLines(value: ConceptLessonContent['visualSteps'] | undefined): string {
+  return (value ?? []).map((item) => `${item.step} | ${item.title} | ${item.detail}`).join('\n');
+}
+
+function linesToVisualSteps(value: string): ConceptLessonContent['visualSteps'] {
+  return linesToList(value).map((line, index) => {
+    const [step = '', title = '', ...detail] = line.split('|').map((part) => part.trim());
+    return { step: step || String(index + 1), title, detail: detail.join(' | ') };
+  });
+}
+
 export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
   const [tab, setTab] = useState<'concepts' | 'units' | 'questions' | 'students'>('concepts');
   const [data, setData] = useState<AdminOverview | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [unitFilter, setUnitFilter] = useState<number>(1);
   const [onlyMissing, setOnlyMissing] = useState(false);
+  const [announcementBusy, setAnnouncementBusy] = useState(false);
+  const [announcementMessage, setAnnouncementMessage] = useState<string | null>(null);
+  const [announcementError, setAnnouncementError] = useState(false);
 
   // Add Concept form
   const [newConceptUnitId, setNewConceptUnitId] = useState<number>(1);
   const [newConceptTitle, setNewConceptTitle] = useState('');
   const [newConceptSummary, setNewConceptSummary] = useState('');
   const [newConceptSql, setNewConceptSql] = useState('SELECT * FROM students LIMIT 5;');
+  const [newConceptDuration, setNewConceptDuration] = useState(15);
+  const [newConceptXp, setNewConceptXp] = useState(60);
 
   // Edit / AI Review Concept state
   const [editingConcept, setEditingConcept] = useState<AdminConcept | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editSummary, setEditSummary] = useState('');
   const [editSql, setEditSql] = useState('');
+  const [editDuration, setEditDuration] = useState(15);
+  const [editXp, setEditXp] = useState(60);
   const [editLesson, setEditLesson] = useState<ConceptLessonContent | null>(null);
   const [aiGenerating, setAiGenerating] = useState(false);
+  const [savingLesson, setSavingLesson] = useState(false);
   const [aiDraftReady, setAiDraftReady] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -150,11 +179,30 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
     setTimeout(() => setStatusMsg(null), 3500);
   };
 
+  const announceDailyChampion = async () => {
+    setAnnouncementBusy(true);
+    setAnnouncementMessage(null);
+    setAnnouncementError(false);
+    try {
+      const res = await apiFetch('/api/admin/discord/daily-champion/announce', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.message || 'Could not announce today’s champion.');
+      setAnnouncementMessage(json.message);
+    } catch (error) {
+      setAnnouncementError(true);
+      setAnnouncementMessage((error as Error).message);
+    } finally {
+      setAnnouncementBusy(false);
+    }
+  };
+
   const openEditor = (c: AdminConcept) => {
     setEditingConcept(c);
     setEditTitle(c.title);
     setEditSummary(c.summary);
     setEditSql(c.practical_sql);
+    setEditDuration(c.duration_minutes);
+    setEditXp(c.xp_reward);
     setEditLesson(
       c.lesson_content?.simpleIntro
         ? c.lesson_content
@@ -163,6 +211,8 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
             detailedExplanation: c.definition_text || c.summary,
             definitions: [{ term: c.title, meaning: c.definition_text || c.summary }],
             realWorldExamples: [c.example_text || c.summary],
+            advantages: [],
+            disadvantages: [],
             practicalExamples: [{ label: c.title, snippet: c.practical_sql, outcome: '' }],
             visualSteps: [],
             commonMistakes: [],
@@ -196,34 +246,52 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
 
   const handleSaveAndApprove = async () => {
     if (!editingConcept || !editLesson) return;
-    await apiFetch(`/api/admin/concepts/${editingConcept.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: editTitle,
-        topic_tag: editingConcept.topic_tag || editTitle,
-        summary: editSummary,
-        duration_minutes: editingConcept.duration_minutes,
-        xp_reward: editingConcept.xp_reward,
-        definition_text: editLesson.detailedExplanation,
-        example_text: editLesson.realWorldExamples?.[0] ?? editSummary,
-        practical_sql: editSql,
-        lesson_content: editLesson,
-      }),
-    });
-    await apiFetch(`/api/admin/concepts/${editingConcept.id}/approve-lesson`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lesson_content: editLesson,
-        practical_sql: editSql,
-        publish: true,
-      }),
-    });
-    setEditingConcept(null);
-    await loadOverview();
-    await onDashboardRefresh();
-    flash('Lesson approved, saved to database, and published!');
+    setSavingLesson(true);
+    setAiError(null);
+    try {
+      const lessonToSave: ConceptLessonContent = {
+        ...editLesson,
+        // Keep the legacy definition data consistent with the single editable Definition field.
+        definitions: [{ term: editTitle.trim() || editingConcept.title, meaning: editLesson.detailedExplanation }],
+        practicalExamples: (editLesson.practicalExamples?.length
+          ? editLesson.practicalExamples
+          : [{ label: `${editTitle || editingConcept.title} Practical Example`, snippet: editSql, outcome: '' }])
+          .map((example, index) => index === 0 ? { ...example, snippet: editSql } : example),
+      };
+      const saveResponse = await apiFetch(`/api/admin/concepts/${editingConcept.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editTitle,
+          topic_tag: editingConcept.topic_tag || editTitle,
+          summary: editSummary,
+          duration_minutes: editDuration,
+          xp_reward: editXp,
+          definition_text: lessonToSave.detailedExplanation,
+          example_text: lessonToSave.realWorldExamples?.[0] ?? editSummary,
+          practical_sql: editSql,
+          lesson_content: lessonToSave,
+        }),
+      });
+      const saveData = await saveResponse.json().catch(() => ({}));
+      if (!saveResponse.ok) throw new Error(saveData.error || 'Could not save lesson changes.');
+
+      const publishResponse = await apiFetch(`/api/admin/concepts/${editingConcept.id}/approve-lesson`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lesson_content: lessonToSave, practical_sql: editSql, publish: true }),
+      });
+      const publishData = await publishResponse.json().catch(() => ({}));
+      if (!publishResponse.ok) throw new Error(publishData.error || 'Lesson was saved but could not be published.');
+
+      await Promise.all([loadOverview(), onDashboardRefresh()]);
+      setEditingConcept(null);
+      flash('Lesson changes saved and published to the Learning Path.');
+    } catch (error) {
+      setAiError((error as Error).message || 'Could not save lesson changes.');
+    } finally {
+      setSavingLesson(false);
+    }
   };
 
   const handleReorder = async (conceptId: number, direction: 'up' | 'down') => {
@@ -275,12 +343,24 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
         topic_tag: newConceptTitle,
         title: newConceptTitle,
         summary: newConceptSummary || newConceptTitle,
-        duration_minutes: 15,
-        xp_reward: 60,
+        duration_minutes: newConceptDuration,
+        xp_reward: newConceptXp,
         gem_reward: 15,
         definition_text: newConceptSummary || newConceptTitle,
         example_text: newConceptSummary || newConceptTitle,
         practical_sql: newConceptSql,
+        lesson_content: {
+          simpleIntro: newConceptSummary || newConceptTitle,
+          detailedExplanation: newConceptSummary || newConceptTitle,
+          definitions: [{ term: newConceptTitle, meaning: newConceptSummary || newConceptTitle }],
+          realWorldExamples: [],
+          advantages: [],
+          disadvantages: [],
+          practicalExamples: [{ label: `${newConceptTitle} example`, snippet: newConceptSql, outcome: '' }],
+          visualSteps: [],
+          commonMistakes: [],
+          quickRecap: [newConceptSummary || newConceptTitle],
+        },
         is_published: false, // New concepts start as draft until approved/published
       }),
     });
@@ -370,13 +450,20 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
           </p>
         </div>
 
+        <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={announceDailyChampion} disabled={announcementBusy}
+          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
+          <Trophy className="h-4 w-4" />{announcementBusy ? 'Sending…' : 'Announce Daily Champion'}
+        </button>
         {statusMsg && (
           <div className="px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
             <Check className="w-4 h-4" />
             <span>{statusMsg}</span>
           </div>
         )}
+        </div>
       </div>
+      {announcementMessage && <p role="status" className={`rounded-xl border px-4 py-2 text-sm ${announcementError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{announcementMessage}</p>}
 
       {/* Tab Bar */}
       <div className="flex flex-wrap gap-1.5 p-1.5 bg-slate-100 rounded-xl w-fit">
@@ -445,7 +532,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
             >
               <h3 className="font-display font-bold text-base text-slate-900 flex items-center gap-2">
                 <Plus className="w-4 h-4 text-emerald-600" />
-                <span>Add Micro-Concept</span>
+                <span>Add Learning Path Concept</span>
               </h3>
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Unit</label>
@@ -482,8 +569,18 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
                 />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Lesson time (minutes)</label>
+                  <input type="number" min={1} value={newConceptDuration} onChange={(e) => setNewConceptDuration(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Completion XP</label>
+                  <input type="number" min={0} value={newConceptXp} onChange={(e) => setNewConceptXp(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+              </div>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Practical SQL</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Practical SQL example</label>
                 <input
                   type="text"
                   value={newConceptSql}
@@ -495,7 +592,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
                 type="submit"
                 className="w-full btn-tactile py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold border-b-4 border-emerald-800 cursor-pointer"
               >
-                Create Draft Concept
+                Add Draft to Learning Path
               </button>
             </form>
 
@@ -779,6 +876,11 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
                     {q.question_type}
                   </div>
                   <div className="text-sm font-medium text-slate-900">{q.prompt}</div>
+                  {q.payload?.auditStatus === 'needs_admin_review' && (
+                    <div className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-900">
+                      Needs admin review · {String(q.payload.auditReason ?? 'Answer validation requires review.')}
+                    </div>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -897,7 +999,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
               <div>
                 <div className="text-xs text-slate-500">{editingConcept.unit_title}</div>
                 <h2 className="font-display font-bold text-lg text-slate-900">
-                  Edit &amp; Approve Lesson · {editingConcept.title}
+                  Edit Learning Path Lesson · {editingConcept.title}
                 </h2>
               </div>
               <button
@@ -912,7 +1014,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
             <div className="p-5 overflow-y-auto space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                 <div className="text-xs text-slate-600">
-                  Use AI to draft a fresh 10-part beginner-friendly lesson, then review and approve to persist.
+                  Edit the lesson content students see in Learn Path, including advantages and disadvantages for this topic.
                 </div>
                 <button
                   type="button"
@@ -921,7 +1023,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
                   className="btn-tactile px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold border-b-4 border-sky-800 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>{aiGenerating ? 'Generating Draft...' : 'Generate AI Lesson Draft'}</span>
+                  <span>{aiGenerating ? 'Generating Draft...' : 'Generate Lesson Draft with AI'}</span>
                 </button>
               </div>
 
@@ -933,7 +1035,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
 
               {aiDraftReady && (
                 <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-800">
-                  New AI draft loaded below. Review the fields and click &ldquo;Approve &amp; Save Lesson&rdquo; to persist.
+                  AI draft loaded. Review each learning-path section before publishing.
                 </div>
               )}
 
@@ -958,6 +1060,17 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Lesson time (minutes)</label>
+                  <input type="number" min={1} value={editDuration} onChange={(e) => setEditDuration(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Completion XP</label>
+                  <input type="number" min={0} value={editXp} onChange={(e) => setEditXp(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Summary</label>
                 <input
@@ -979,7 +1092,7 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Detailed Beginner Explanation</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Definition</label>
                 <textarea
                   rows={3}
                   value={editLesson.detailedExplanation}
@@ -990,19 +1103,39 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Quick Recap (one point per line)</label>
-                <textarea
-                  rows={2}
-                  value={editLesson.quickRecap.join('\n')}
-                  onChange={(e) =>
-                    setEditLesson({
-                      ...editLesson,
-                      quickRecap: e.target.value.split('\n').filter(Boolean),
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs"
-                />
+              <div className="border-t border-slate-200 pt-4 space-y-4">
+                <h3 className="font-display font-bold text-sm text-slate-900">Learning Path Lesson Sections</h3>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Real-World Example (one per line)</label>
+                  <textarea rows={3} value={listToLines(editLesson.realWorldExamples)} onChange={(e) => setEditLesson({ ...editLesson, realWorldExamples: linesToList(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Advantages (one per line)</label>
+                    <textarea rows={4} value={listToLines(editLesson.advantages)} onChange={(e) => setEditLesson({ ...editLesson, advantages: linesToList(e.target.value) })} placeholder="Add topic-specific advantages" className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Disadvantages (one per line)</label>
+                    <textarea rows={4} value={listToLines(editLesson.disadvantages)} onChange={(e) => setEditLesson({ ...editLesson, disadvantages: linesToList(e.target.value) })} placeholder="Add topic-specific disadvantages or limitations" className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Visual diagram steps (one per line: Step | title | explanation)</label>
+                  <textarea rows={3} value={visualStepsToLines(editLesson.visualSteps)} onChange={(e) => setEditLesson({ ...editLesson, visualSteps: linesToVisualSteps(e.target.value) })} placeholder={'1 | Choose a table | Identify the rows to query'} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Practical example outcome</label>
+                  <textarea rows={2} value={editLesson.practicalExamples?.[0]?.outcome ?? ''} onChange={(e) => {
+                    const examples = [...(editLesson.practicalExamples ?? [])];
+                    const first = examples[0] ?? { label: `${editTitle} example`, snippet: editSql, outcome: '' };
+                    examples[0] = { ...first, snippet: editSql, outcome: e.target.value };
+                    setEditLesson({ ...editLesson, practicalExamples: examples });
+                  }} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Common mistakes to avoid (one per line)</label>
+                  <textarea rows={3} value={listToLines(editLesson.commonMistakes)} onChange={(e) => setEditLesson({ ...editLesson, commonMistakes: linesToList(e.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                </div>
               </div>
             </div>
 
@@ -1017,9 +1150,10 @@ export function AdminDashboard({ onDashboardRefresh }: AdminDashboardProps) {
               <button
                 type="button"
                 onClick={handleSaveAndApprove}
-                className="btn-tactile px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold border-b-4 border-emerald-800 cursor-pointer"
+                disabled={savingLesson}
+                className="btn-tactile px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold border-b-4 border-emerald-800 cursor-pointer disabled:cursor-wait disabled:opacity-60"
               >
-                Approve &amp; Save Lesson
+                {savingLesson ? 'Saving and publishing…' : 'Save & Publish Learning Path Lesson'}
               </button>
             </div>
           </div>

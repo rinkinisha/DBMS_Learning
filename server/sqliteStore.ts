@@ -14,6 +14,8 @@ import type {
   DailyStreakRow,
   DataStore,
   DataStoreStatus,
+  DailyChampionCandidate,
+  DiscordAnnouncementHistoryRow,
   LeaderboardAggregateData,
   MigrationAuditRow,
   PasswordResetRow,
@@ -390,7 +392,8 @@ export class SqliteDataStore implements DataStore {
          xp, hearts, max_hearts, gems, streak_days, longest_streak,
          last_active_date, league, weekly_xp, role, is_primary, is_demo,
          timezone, streak_history_json, streak_updated_at, sql_solved_count, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         , discord_user_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.name,
         input.username,
@@ -414,6 +417,7 @@ export class SqliteDataStore implements DataStore {
         input.streak_updated_at,
         input.sql_solved_count,
         input.created_at,
+        input.discord_user_id ?? null,
       ]
     );
   }
@@ -887,6 +891,47 @@ export class SqliteDataStore implements DataStore {
        ORDER BY id DESC LIMIT ?`,
       [studentId, limit]
     );
+  }
+
+  async getDailyChampionCandidates(localDate: string): Promise<DailyChampionCandidate[]> {
+    return queryAll<DailyChampionCandidate>(this.db, `
+      SELECT s.id AS student_id, s.name, s.username, s.discord_user_id,
+        COUNT(DISTINCT xp.source_ref_id) AS concepts_completed,
+        COALESCE((SELECT SUM(day_xp.xp_amount) FROM xp_transactions day_xp
+          WHERE day_xp.student_id = s.id AND day_xp.local_date = ?), 0) AS xp_earned
+      FROM xp_transactions xp
+      JOIN students s ON s.id = xp.student_id
+      WHERE xp.local_date = ? AND xp.source_type = 'concept_pass'
+      GROUP BY s.id, s.name, s.username, s.discord_user_id
+      HAVING COUNT(DISTINCT xp.source_ref_id) > 0
+      ORDER BY concepts_completed DESC, xp_earned DESC, s.id ASC
+    `, [localDate, localDate]);
+  }
+
+  async getDiscordAnnouncementHistory(localDate: string): Promise<DiscordAnnouncementHistoryRow | null> {
+    return queryOne<DiscordAnnouncementHistoryRow>(this.db,
+      'SELECT * FROM discord_announcement_history WHERE local_date = ?', [localDate]);
+  }
+
+  async claimDiscordAnnouncement(row: DiscordAnnouncementHistoryRow): Promise<boolean> {
+    this.db.run(`INSERT INTO discord_announcement_history
+      (local_date, status, winners_json, concepts_completed, xp_earned, message, error, created_at, updated_at, sent_at)
+      VALUES (?, 'pending', ?, ?, ?, NULL, NULL, ?, ?, NULL)
+      ON CONFLICT(local_date) DO UPDATE SET status = 'pending', winners_json = excluded.winners_json,
+        concepts_completed = excluded.concepts_completed, xp_earned = excluded.xp_earned,
+        message = NULL, error = NULL, updated_at = excluded.updated_at, sent_at = NULL
+      WHERE discord_announcement_history.status IN ('failed', 'no_winner')`,
+    [row.local_date, row.winners_json, row.concepts_completed, row.xp_earned, row.created_at, row.updated_at]);
+    const claimed = this.db.getRowsModified() > 0;
+    saveAppDb();
+    return claimed;
+  }
+
+  async updateDiscordAnnouncement(row: DiscordAnnouncementHistoryRow): Promise<void> {
+    runStmt(this.db, `UPDATE discord_announcement_history SET status = ?, winners_json = ?,
+      concepts_completed = ?, xp_earned = ?, message = ?, error = ?, updated_at = ?, sent_at = ? WHERE local_date = ?`,
+    [row.status, row.winners_json, row.concepts_completed, row.xp_earned, row.message, row.error,
+      row.updated_at, row.sent_at, row.local_date]);
   }
 
   async insertQuizAttempt(input: Omit<QuizAttemptRow, 'id'>): Promise<number> {

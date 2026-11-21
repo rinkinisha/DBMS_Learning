@@ -63,7 +63,34 @@ export const SEED_QUESTIONS: SeedQuestion[] = [
   ...UNIT_2_QUESTIONS,
   ...UNIT_3_QUESTIONS,
   ...UNIT_4_QUESTIONS,
-];
+].map((question) => {
+  if (question.question_type === 'sql_challenge') {
+    return {
+      ...question,
+      payload: {
+        ...question.payload,
+        auditStatus: 'needs_admin_review',
+        auditReason: 'No reference SQL result is stored; current grading checks only output columns and minimum row count.',
+      },
+    };
+  }
+  if (question.question_type !== 'mcq') return question;
+  const options = question.payload.options;
+  const correctIndex = question.payload.correctIndex;
+  if (
+    !Array.isArray(options) ||
+    !Number.isInteger(correctIndex) ||
+    Number(correctIndex) < 0 ||
+    Number(correctIndex) >= options.length ||
+    typeof options[Number(correctIndex)] !== 'string'
+  ) {
+    throw new Error(`Invalid MCQ answer mapping in unit ${question.unit_number}: ${question.prompt}`);
+  }
+  return {
+    ...question,
+    payload: { ...question.payload, correctAnswer: options[Number(correctIndex)] },
+  };
+});
 
 export const SEED_BADGES = [
   {
@@ -194,6 +221,7 @@ CREATE TABLE enrollments (
   student_id INTEGER NOT NULL,
   course_id INTEGER NOT NULL,
   semester TEXT NOT NULL,
+  enrollment_date TEXT NOT NULL DEFAULT (DATE('now')),
   grade TEXT,
   PRIMARY KEY (student_id, course_id),
   FOREIGN KEY (student_id) REFERENCES students(student_id),
@@ -209,6 +237,30 @@ CREATE TABLE projects (
   FOREIGN KEY (dept_id) REFERENCES departments(dept_id),
   FOREIGN KEY (lead_instructor_id) REFERENCES instructors(instructor_id)
 );
+
+CREATE TABLE constraint_lab (
+  record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL DEFAULT 'unlabeled',
+  score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
+  created_on TEXT NOT NULL DEFAULT (DATE('now'))
+);
+
+CREATE TABLE index_lab_records (
+  record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category TEXT NOT NULL,
+  metric INTEGER NOT NULL,
+  recorded_on TEXT NOT NULL
+);
+
+CREATE INDEX idx_index_lab_category_metric
+  ON index_lab_records(category, metric);
+
+CREATE VIEW student_course_directory AS
+  SELECT s.student_id, s.full_name AS student_name, c.course_code, c.title AS course_title,
+         e.semester, e.grade, e.enrollment_date
+  FROM students s
+  JOIN enrollments e ON e.student_id = s.student_id
+  JOIN courses c ON c.course_id = e.course_id;
 
 INSERT INTO departments VALUES
   ('CS', 'Computer Science', 'Turing Hall', 480000),
@@ -230,28 +282,44 @@ INSERT INTO students VALUES
   (4, 'Kabir Sharma', 'kabir@arena.edu', 'EC', 1, 3.41),
   (5, 'Elena Rostova', 'elena@arena.edu', 'DS', 3, 3.79),
   (6, 'Marcus Chen', 'marcus@arena.edu', 'CS', 2, 3.54),
-  (7, 'Sana Kapoor', 'sana@arena.edu', 'MA', 4, 3.84);
+  (7, 'Sana Kapoor', 'sana@arena.edu', 'MA', 4, 3.84),
+  (8, 'Noah Williams', 'noah@arena.edu', 'MA', 1, 3.27);
 
 INSERT INTO courses VALUES
   (201, 'CS301', 'Database Management Systems', 4, 'CS', 102),
   (202, 'CS204', 'Data Structures & Algorithms', 4, 'CS', 101),
   (203, 'DS310', 'Distributed Data Pipelines', 3, 'DS', 103),
   (204, 'EC210', 'Signals & Digital Systems', 3, 'EC', 104),
-  (205, 'MA220', 'Discrete Structures & Logic', 4, 'MA', 105);
+  (205, 'MA220', 'Discrete Structures & Logic', 4, 'MA', 105),
+  (206, 'MA230', 'Number Theory', 3, 'MA', NULL);
 
-INSERT INTO enrollments VALUES
-  (1, 201, 'Fall 2026', 'A'),
-  (1, 202, 'Fall 2026', 'A'),
-  (2, 201, 'Fall 2026', 'B+'),
-  (3, 201, 'Fall 2026', 'A'),
-  (3, 203, 'Fall 2026', 'A-'),
-  (4, 204, 'Fall 2026', 'B'),
-  (5, 203, 'Fall 2026', 'A'),
-  (6, 202, 'Fall 2026', 'B+'),
-  (7, 205, 'Fall 2026', 'A');
+INSERT INTO enrollments (student_id, course_id, semester, enrollment_date, grade) VALUES
+  (1, 201, 'Fall 2026', '2026-08-20', 'A'),
+  (1, 202, 'Fall 2026', '2026-08-20', 'A'),
+  (2, 201, 'Fall 2026', '2026-08-21', 'B+'),
+  (3, 201, 'Fall 2026', '2026-08-19', 'A'),
+  (3, 203, 'Fall 2026', '2026-08-19', 'A-'),
+  (4, 204, 'Fall 2026', '2026-08-22', 'B'),
+  (5, 203, 'Fall 2026', '2026-08-21', 'A'),
+  (6, 202, 'Fall 2026', '2026-08-22', 'B+'),
+  (7, 205, 'Fall 2026', '2026-08-20', 'A'),
+  (7, 204, 'Fall 2026', '2026-08-23', NULL);
 
 INSERT INTO projects VALUES
   (301, 'Zero-Latency Query Engine', 'CS', 102, 95000),
   (302, 'Autonomous Schema Verifier', 'DS', 103, 72000),
   (303, 'Error-Correcting Memory Bus', 'EC', 104, 68000);
+
+INSERT INTO constraint_lab (score) VALUES (95), (72);
+
+WITH RECURSIVE sequence(n) AS (
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM sequence WHERE n < 1200
+)
+INSERT INTO index_lab_records (category, metric, recorded_on)
+SELECT 'dept-' || printf('%02d', ((n - 1) % 12) + 1),
+       (n * 37) % 1000,
+       DATE('2025-01-01', '+' || ((n - 1) % 365) || ' days')
+FROM sequence;
 `;

@@ -34,7 +34,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
       ],
       realWorldExamples: [
         'Spotify uses a DBMS to link millions of tracks, playlists, and user listening histories.',
-        'Hospital portals use a DBMS to ensure doctors always see up-to-date patient allergies and prescriptions.',
+        'Hospital portals use a DBMS to share patient allergy and prescription records; clinical workflows also depend on timely synchronization and access controls.',
       ],
       practicalExamples: [
         {
@@ -68,31 +68,31 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
     xp_reward: 50,
     gem_reward: 15,
     definition_text:
-      'DBMS technology evolved from rigid 1960s Navigational databases (Hierarchical IMS & Network CODASYL) to Edgar F. Codd’s 1970 Relational Model (tables + SQL), followed by Object-Relational, NoSQL, and distributed cloud databases.',
+      'DBMS technology includes 1960s navigational systems such as hierarchical IMS and network-model systems, followed by E. F. Codd’s 1970 relational model. SQL was developed later in the 1970s, followed by object-relational, NoSQL, and distributed cloud systems; these models have coexisted.',
     example_text:
-      'Before 1970, programmers wrote complex pointer-chasing code to walk tree paths. Codd’s Relational Model let anyone ask "what" they wanted with SQL instead of "how" to navigate pointers.',
+      'Navigational systems often required applications to follow record paths. Codd’s relational model represented data with relations and later inspired declarative query languages such as SQL, which was developed after the 1970 paper.',
     diagram_type: 'schema_instance',
     diagram_config: {
       schemaColumns: ['Era', 'Model', 'Key Milestone'],
       instances: [
         ['1960s', 'Hierarchical & Network', 'IBM IMS & CODASYL pointer trees'],
-        ['1970s', 'Relational Model', 'E.F. Codd paper + System R / SQL'],
+        ['1970s', 'Relational Model & SQL development', 'Codd’s relational model; SQL was developed later in research and commercial systems'],
         ['1990s', 'Object-Relational', 'Complex types, multimedia & warehousing'],
         ['2000s+', 'NoSQL & NewSQL', 'Web-scale JSON documents & distributed SQL'],
       ],
     },
     practical_sql: 'SELECT dept_id, dept_name, building FROM departments;',
-    practical_explanation: 'Relational tables replaced brittle tree pointers with simple primary/foreign key values.',
+    practical_explanation: 'Relational queries describe the requested result without requiring application code to follow physical record pointers; earlier navigational systems continued in use.',
     lesson_content: {
       simpleIntro: 'Modern databases did not start with SQL tables. It took decades of breakthroughs—from NASA moon-mission trees to Edgar Codd’s mathematical revolution—to make querying effortless.',
-      detailedExplanation: 'In the 1960s, IBM built IMS (Hierarchical Model, strict parent-child trees) for the Apollo space program, while Charles Bachman designed the Network Model (graphs with many-to-many pointers). In 1970, E.F. Codd published the Relational Model using mathematical set theory, freeing developers from manual pointer navigation. In the 1970s–80s, SQL and commercial RDBMSs (Oracle, DB2, Ingres) dominated. The 2000s introduced NoSQL (MongoDB, Cassandra) for massive unstructured web data, and today NewSQL merges relational ACID safety with cloud scale.',
+      detailedExplanation: 'IBM developed IMS in the 1960s to support the Apollo space program; IMS is a hierarchical database management system and remains in use. Charles Bachman’s work on IDS was foundational to the Network Model. In 1970, E. F. Codd published the relational model using mathematical relations. SQL was developed later, notably in IBM’s System R research during the 1970s, and commercial relational systems followed. The timeline is an overview: hierarchical, network, relational, and non-relational systems have coexisted rather than simply replacing one another.',
       definitions: [
         { term: 'Hierarchical Model', meaning: '1960s tree-structured DBMS where each child has exactly one parent.' },
         { term: 'Network Model', meaning: 'Graph-based model allowing multiple parent records via physical pointers.' },
         { term: 'Relational Model', meaning: '1970 model by E.F. Codd representing all data as tables (relations).' },
       ],
       realWorldExamples: [
-        'NASA’s Apollo program used IBM IMS to track millions of Saturn V rocket parts.',
+        'IBM developed IMS for NASA’s Apollo program to manage parts information for the Saturn launch vehicles.',
         'Modern fintech apps use relational SQL databases descended directly from Codd’s 1970 paper.',
       ],
       practicalExamples: [
@@ -104,7 +104,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
       ],
       visualSteps: [
         { step: '1960s', title: 'Navigational Era', detail: 'Trees & graphs requiring manual pointer walking.' },
-        { step: '1970s', title: 'Relational Revolution', detail: 'Codd’s tables + declarative SQL queries.' },
+        { step: '1970s', title: 'Relational model and SQL research', detail: 'Codd published the relational model in 1970; IBM developed SQL later in System R research.' },
         { step: '2010s+', title: 'Cloud & Hybrid Era', detail: 'Distributed SQL + specialized NoSQL stores.' },
       ],
       commonMistakes: [
@@ -114,7 +114,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
       quickRecap: [
         '1960s: Hierarchical (IMS) & Network (CODASYL).',
         '1970: E.F. Codd introduces Relational Databases.',
-        '1980s–Present: SQL RDBMS dominance + NoSQL/Cloud evolution.',
+        '1970s onward: SQL research and relational systems developed alongside other database models.',
       ],
     },
   },
@@ -128,7 +128,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
     xp_reward: 50,
     gem_reward: 15,
     definition_text:
-      'Key advantages of a DBMS include controlling data redundancy, guaranteeing data consistency, enforcing integrity constraints, providing fine-grained security, enabling concurrent multi-user access, and automating crash backup and recovery.',
+      'A DBMS can reduce uncontrolled redundancy, enforce declared integrity rules, provide access controls, coordinate concurrent work, and support recovery. These protections depend on correct schema, configuration, operations, and backup practices; a DBMS does not guarantee error-free data by itself.',
     example_text:
       'When a student updates their email once in the Students table, admissions, library, and exam portals all see the updated email instantly.',
     diagram_type: 'key_explorer',
@@ -144,12 +144,12 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
     practical_sql: 'SELECT COUNT(*) AS total_students, ROUND(AVG(gpa), 2) AS avg_gpa FROM students;',
     practical_explanation: 'Centralized storage allows fast, accurate company-wide analytics and sharing.',
     lesson_content: {
-      simpleIntro: 'Why do banks, hospitals, and universities invest in DBMS software instead of plain folders of files? Because a DBMS guarantees accuracy, security, and teamwork at scale.',
-      detailedExplanation: 'A DBMS centralizes data so multiple applications share a single source of truth. By eliminating duplicate files, updates happen in one place (data consistency). Built-in constraints reject bad inputs (like negative age or duplicate IDs). Role-based permissions hide sensitive columns (such as salaries) from unauthorized users, while locking and write-ahead logging prevent simultaneous edits or crashes from corrupting records.',
+      simpleIntro: 'Why do banks, hospitals, and universities use DBMS software instead of plain folders of files? A DBMS provides tools for organizing, protecting, and sharing data at scale when it is correctly designed and configured.',
+      detailedExplanation: 'A DBMS can reduce duplicated data, enforce configured constraints, provide access controls, coordinate concurrent transactions, and support crash recovery. These are capabilities, not automatic guarantees that every database is correct or every failure harmless: the schema, transaction isolation, permissions, engine settings, and backup/recovery setup matter. Redundancy may still be deliberate, and transaction behavior varies by engine.',
       definitions: [
-        { term: 'Data Consistency', meaning: 'Every user sees the exact same up-to-date value with no stale copies.' },
+        { term: 'Data Consistency', meaning: 'Data remains coherent with database rules and transaction guarantees; replica freshness depends on the system’s consistency model.' },
         { term: 'Data Integrity', meaning: 'Accuracy and validity enforced by schema rules and constraints.' },
-        { term: 'Concurrency Control', meaning: 'Coordinating simultaneous transactions so they never overwrite each other.' },
+        { term: 'Concurrency Control', meaning: 'Coordinating concurrent transactions according to the database’s locking, isolation, and conflict-handling rules.' },
       ],
       realWorldExamples: [
         'Airline booking systems stop two passengers from reserving seat 14A at the exact same millisecond.',
@@ -163,7 +163,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
         },
       ],
       visualSteps: [
-        { step: '01', title: 'Deduplicate', detail: 'Store each entity once and link via keys.' },
+        { step: '01', title: 'Reduce duplication', detail: 'Store each fact once where practical and link related records with keys.' },
         { step: '02', title: 'Validate', detail: 'Reject invalid values before writing to disk.' },
         { step: '03', title: 'Protect', detail: 'Authenticate roles and log changes for recovery.' },
       ],
@@ -310,7 +310,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
     practical_explanation: 'Declarative filtering answers brand-new business questions without custom file-parsing programs.',
     lesson_content: {
       simpleIntro: 'Writing a tiny program to read a text file works for 50 rows on one laptop. The moment 500 users need fast, crash-safe answers at the same time, you need a DBMS.',
-      detailedExplanation: 'There are five core reasons modern software needs a DBMS: (1) Persistent Scale—managing gigabytes or terabytes far larger than RAM; (2) Concurrent Access—letting many users read and write without corrupting bytes; (3) Ad-hoc Querying—answering unpredictable questions quickly in SQL; (4) Security & Privacy—controlling exactly who sees which columns; and (5) Crash Recovery—guaranteeing partial operations roll back cleanly.',
+      detailedExplanation: 'A DBMS supports persistent data beyond application memory, coordinates concurrent access, provides query languages, offers security controls, and implements transaction and recovery mechanisms. The guarantees depend on the selected engine, transaction settings, schema, permissions, and backup/recovery configuration; a DBMS cannot ensure every query is fast or every operation is recoverable under every failure.',
       definitions: [
         { term: 'Ad-hoc Query', meaning: 'An unscheduled, on-the-fly question posed to a database without writing new application code.' },
         { term: 'Lost Update', meaning: 'Concurrency bug where two simultaneous edits overwrite one another.' },
@@ -349,7 +349,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
     xp_reward: 55,
     gem_reward: 15,
     definition_text:
-      'DBMS Architecture defines how users, application servers, query processors, and physical storage interact. Depending on deployment needs, DBMS systems are structured across 1-Tier (1-Level), 2-Tier (2-Level), or 3-Tier (3-Level) architectures.',
+      'DBMS deployment architecture describes where clients, application logic, and database services run. Common arrangements include 1-tier, 2-tier, and 3-tier deployments; this is distinct from the ANSI-SPARC three-schema abstraction.',
     example_text:
       'In a web app like DBMS Arena, your browser talks to an Express API server, which talks to the SQLite/SQL engine—a classic multi-level architecture.',
     diagram_type: 'three_schema',
@@ -364,7 +364,7 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
     practical_explanation: 'The DBMS catalog stores metadata describing every table managed inside the architecture.',
     lesson_content: {
       simpleIntro: 'Just like a building has a blueprint separating plumbing, electrical wiring, and living rooms, a DBMS uses layered architecture to separate user screens from raw disk storage.',
-      detailedExplanation: 'DBMS architecture can be viewed in two complementary ways: deployment tiers (1-Level, 2-Level, 3-Level client/server separation) and internal schema abstraction (External, Conceptual, Internal). Separating layers improves security (browsers never directly touch raw disk files), scalability (multiple web servers can share one database cluster), and maintainability.',
+      detailedExplanation: 'This lesson compares two distinct models that both use three parts. Deployment tiers describe where software runs: client, application server, and database server. ANSI-SPARC schema levels describe database abstraction: External (user views), Conceptual (logical schema), and Internal (physical storage). They are related ideas about separation, but their layers do not map one-to-one. A middle application tier can centralize validation and access control; schema levels support data abstraction and independence.',
       definitions: [
         { term: 'DBMS Architecture', meaning: 'Structural blueprint governing how clients, business logic, and database storage communicate.' },
         { term: 'Query Processor', meaning: 'DBMS component that parses SQL, optimizes execution plans, and fetches rows.' },
@@ -381,15 +381,15 @@ export const UNIT_1_CONCEPTS: SeedConcept[] = [
         },
       ],
       visualSteps: [
-        { step: '01', title: '1-Level', detail: 'User + DBMS + Files on one machine.' },
-        { step: '02', title: '2-Level', detail: 'Client UI talks directly to DB Server over API/ODBC.' },
-        { step: '03', title: '3-Level', detail: 'Client -> App Server -> DB Server (modern web standard).' },
+        { step: '01', title: 'Deployment tiers', detail: 'Compare 1-tier, 2-tier, and 3-tier placements of clients, application logic, and database servers.' },
+        { step: '02', title: 'ANSI-SPARC schemas', detail: 'External views sit above the Conceptual logical schema, which is mapped to Internal physical storage.' },
+        { step: '03', title: 'Keep models distinct', detail: 'Deployment tiers describe software location; schema levels describe data abstraction.' },
       ],
       commonMistakes: [
-        'Mixing up 1/2/3-Tier physical deployment architecture with the ANSI-SPARC 3-Schema logical abstraction—both use "3-Level" terminology in textbooks!',
+        'Treating deployment tiers and ANSI-SPARC schema levels as the same model; one describes where components run and the other describes database abstraction.',
       ],
       quickRecap: [
-        'DBMS Architecture separates presentation, query/business logic, and physical storage across 1, 2, or 3 levels.',
+        'Deployment tiers describe where application components run; ANSI-SPARC levels describe external views, the logical schema, and physical storage.',
       ],
     },
   },
@@ -860,10 +860,10 @@ export const UNIT_1_QUESTIONS: SeedQuestion[] = [
     question_type: 'true_false',
     prompt: 'Check this statement on DBMS advantages:',
     payload: {
-      statement: 'A DBMS enforces role-based access control so unauthorized users cannot view sensitive columns like salaries.',
+      statement: 'Many DBMSs provide role or privilege controls that can restrict access to sensitive data, such as salary columns.',
       correct: true,
     },
-    explanation: 'True! Fine-grained security and access control are core advantages of a DBMS.',
+    explanation: 'True. Many DBMS products provide roles, privileges, or view-based access controls; the exact granularity and configuration vary by engine.',
     xp_value: 15,
   },
 
@@ -1226,12 +1226,12 @@ export const UNIT_1_QUESTIONS: SeedQuestion[] = [
     concept_order_index: null,
     is_unit_assessment: true,
     question_type: 'mcq',
-    prompt: '[Unit I Assessment] Which 1970 breakthrough replaced brittle pointer trees with declarative tables?',
+    prompt: '[Unit I Assessment] Which 1970 proposal introduced a table-based relational model as an alternative to navigational pointer models?',
     payload: {
       options: ['E.F. Codd’s Relational Model', '1-Level Flat Files', 'Assembly Tape Storage', 'Manual CSV Merging'],
       correctIndex: 0,
     },
-    explanation: 'E.F. Codd introduced the Relational Model in 1970.',
+    explanation: 'E. F. Codd published the relational model in 1970. It offered a table-based alternative to hierarchical and network pointer models; those earlier systems, including IBM IMS, continued to be used.',
     xp_value: 25,
   },
   {
@@ -1239,15 +1239,15 @@ export const UNIT_1_QUESTIONS: SeedQuestion[] = [
     concept_order_index: null,
     is_unit_assessment: true,
     question_type: 'matching',
-    prompt: '[Unit I Assessment] Match each architecture level to its description:',
+    prompt: '[Unit I Assessment] Match each architecture model to its description:',
     payload: {
       pairs: [
-        { left: '1-Level Architecture', right: 'UI + DBMS + Storage on one device' },
-        { left: '2-Level Architecture', right: 'Client talks directly to DB Server via JDBC/ODBC' },
-        { left: '3-Level Architecture', right: 'External, Conceptual & Internal separation' },
+        { left: '1-Tier Architecture', right: 'UI + application logic + database on one device' },
+        { left: '2-Tier Architecture', right: 'Client talks directly to the database server' },
+        { left: 'ANSI-SPARC 3-Schema Architecture', right: 'External, Conceptual & Internal schema separation' },
       ],
     },
-    explanation: 'Each architecture tier balances simplicity, security, and scalability.',
+    explanation: 'Tier architecture describes where application components run; ANSI-SPARC schema architecture separates user views, the logical schema, and physical storage.',
     xp_value: 30,
   },
   {

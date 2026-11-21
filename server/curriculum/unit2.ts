@@ -83,17 +83,17 @@ const U2_SPECS: U2Spec[] = [
     title: 'SQL Overview & Command Sublanguages',
     summary: 'Distinguish DDL, DML, DQL, DCL, and TCL command groups in SQL.',
     intro: 'SQL commands fall into five clean toolkits—some build tables, some read rows, and others protect transactions.',
-    detail: 'SQL commands are grouped by role: DQL (Data Query Language: SELECT) reads data; DML (Data Manipulation Language: INSERT, UPDATE, DELETE) changes rows; DDL (Data Definition Language: CREATE, ALTER, DROP) defines table schemas; DCL (GRANT, REVOKE) controls permissions; TCL (COMMIT, ROLLBACK) manages transactions.',
+    detail: 'This course uses a common teaching classification: DQL (SELECT) reads data; DML (INSERT, UPDATE, DELETE) changes rows; DDL (CREATE, ALTER, DROP) defines structures; DCL (GRANT, REVOKE) controls permissions; and TCL (COMMIT, ROLLBACK) manages transactions. Textbooks and vendors do not all separate DQL from DML; some classify SELECT as part of DML, so follow the convention stated by the course or exam.',
     defTerm: 'DQL / DML / DDL',
-    defMeaning: 'DQL queries rows (SELECT); DML modifies rows (INSERT/UPDATE/DELETE); DDL defines structures (CREATE/ALTER/DROP).',
+    defMeaning: 'In this course convention, DQL queries rows (SELECT); DML modifies rows (INSERT/UPDATE/DELETE); and DDL defines structures (CREATE/ALTER/DROP). Some sources group SELECT under DML instead.',
     realExample: 'Database migrations use DDL to add columns, while web APIs use DML/DQL every millisecond.',
     sql: "SELECT name, type FROM sqlite_master WHERE type='table';",
     outcome: 'Lists all DDL-created tables inside the database.',
     mistake: 'Confusing DELETE (DML—removes rows) with DROP (DDL—destroys the entire table structure).',
-    recap: 'DQL = SELECT; DML = INSERT/UPDATE/DELETE; DDL = CREATE/ALTER/DROP; TCL = COMMIT/ROLLBACK.',
+    recap: 'Course convention: DQL = SELECT; DML = INSERT/UPDATE/DELETE; DDL = CREATE/ALTER/DROP; TCL = COMMIT/ROLLBACK. Classifications vary across sources.',
     qPrompt: 'Which SQL sublanguage contains CREATE TABLE, ALTER TABLE, and DROP TABLE?',
     qOptions: ['DDL (Data Definition Language)', 'DML (Data Manipulation Language)', 'DCL (Data Control Language)'],
-    qExplain: 'DDL commands define or alter database structure.',
+    qExplain: 'Under this course convention, DQL reads rows with SELECT, DML changes rows, DDL changes schema, and DCL/TCL cover permissions and transactions. Some references group SELECT under DML.',
   },
   {
     order: 4,
@@ -239,7 +239,7 @@ const U2_SPECS: U2Spec[] = [
     sql: "SELECT student_id, full_name, dept_id FROM students WHERE student_id = 1;",
     outcome: 'Shows an existing inserted row; in Playground you can run INSERT INTO to add new rows.',
     mistake: 'Omitting the column list and supplying values in the wrong column order.',
-    recap: 'Always specify `(columns)` before `VALUES (...)` when inserting rows.',
+    recap: 'Best practice: specify `(columns)` before `VALUES (...)` so inserts remain clear and resilient to schema changes.',
     qPrompt: 'Why is `INSERT INTO students (student_id, full_name, ...) VALUES (...)` safer than omitting the column list?',
     qOptions: [
       'It stays safe even if table columns are reordered or new nullable columns are added',
@@ -301,7 +301,7 @@ const U2_SPECS: U2Spec[] = [
     sql: 'SELECT COUNT(*) AS enrollment_rows FROM enrollments;',
     outcome: 'Always verify row counts before deleting records.',
     mistake: 'Running `DELETE FROM table_name;` without WHERE, or confusing DELETE with DROP TABLE.',
-    recap: 'DELETE removes rows (always use WHERE!); DROP removes the entire table.',
+    recap: 'DELETE removes rows and keeps the table; without WHERE it removes every row. DROP removes the table structure and its data.',
     qPrompt: 'What is the key difference between `DELETE FROM students` and `DROP TABLE students`?',
     qOptions: [
       'DELETE removes rows while keeping the table schema; DROP deletes the entire table and its schema',
@@ -559,7 +559,7 @@ const U2_SPECS: U2Spec[] = [
     sql: 'SELECT c.course_code, c.title, d.dept_name FROM courses c JOIN departments d ON c.dept_id = d.dept_id;',
     outcome: 'Combines Courses with their owning Department names.',
     mistake: 'Joining two tables without an `ON` condition—accidentally producing a huge Cartesian product!',
-    recap: 'JOIN stitches related tables together via `ON tableA.key = tableB.key`.',
+    recap: 'An equijoin matches rows with an equality condition in ON; joins can also use other predicates or have no matching condition (CROSS JOIN).',
     diagramType: 'er_cardinality',
     diagramConfig: {
       scenarios: [

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Flame,
   Heart,
+  Info,
   Play,
   RotateCcw,
   Sparkles,
@@ -49,6 +50,7 @@ export function MiniGameEngine({
   const [checked, setChecked] = useState(false);
   const [isCorrect, setIsCorrect] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState('');
+  const [needsAdminReview, setNeedsAdminReview] = useState(false);
   const [finishedResult, setFinishedResult] = useState<{
     score: number;
     passed: boolean;
@@ -95,6 +97,7 @@ export function MiniGameEngine({
   const initForQuestion = (q: Question | undefined) => {
     setChecked(false);
     setIsCorrect(false);
+    setNeedsAdminReview(false);
     setFeedbackMsg('');
     setSelectedMcq(null);
     setSelectedTf(null);
@@ -261,7 +264,11 @@ export function MiniGameEngine({
   const handleCheck = async () => {
     if (currentQ.question_type === 'mcq') {
       if (selectedMcq === null) return;
-      const ok = selectedMcq === Number(currentQ.payload.correctIndex);
+      const options = (currentQ.payload.options as string[]) ?? [];
+      const correctAnswer = currentQ.payload.correctAnswer;
+      const ok = typeof correctAnswer === 'string'
+        ? options[selectedMcq] === correctAnswer
+        : selectedMcq === Number(currentQ.payload.correctIndex);
       await recordOutcome(ok);
     } else if (currentQ.question_type === 'true_false') {
       if (selectedTf === null) return;
@@ -307,6 +314,12 @@ export function MiniGameEngine({
           rows: data.rows ?? [],
           error: data.error,
         });
+        if (data.reviewRequired) {
+          setChecked(true);
+          setNeedsAdminReview(true);
+          setFeedbackMsg(data.feedback || 'This challenge is flagged for admin review.');
+          return;
+        }
         await recordOutcome(Boolean(data.passed), data.feedback || data.error || currentQ.explanation);
       } catch (err) {
         setSqlPreview({ columns: [], rows: [], error: (err as Error).message });
@@ -742,18 +755,22 @@ export function MiniGameEngine({
         {checked && (
           <div
             className={`p-4 rounded-xl border flex items-start gap-3 ${
-              isCorrect
+              needsAdminReview
+                ? 'bg-amber-50 border-amber-200 text-amber-950'
+                : isCorrect
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                 : 'bg-rose-50 border-rose-200 text-rose-950'
             }`}
           >
-            {isCorrect ? (
+            {needsAdminReview ? (
+              <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            ) : isCorrect ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
             ) : (
               <XCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
             )}
             <div className="space-y-1 text-sm">
-              <div className="font-display font-bold">{isCorrect ? 'Spot on!' : 'Not quite right'}</div>
+              <div className="font-display font-bold">{needsAdminReview ? 'Flagged for admin review' : isCorrect ? 'Spot on!' : 'Not quite right'}</div>
               <p className="text-slate-700">{feedbackMsg}</p>
             </div>
           </div>

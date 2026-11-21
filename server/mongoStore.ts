@@ -16,6 +16,8 @@ import type {
   DailyStreakRow,
   DataStore,
   DataStoreStatus,
+  DailyChampionCandidate,
+  DiscordAnnouncementHistoryRow,
   LeaderboardAggregateData,
   MigrationAuditRow,
   PasswordResetRow,
@@ -154,17 +156,24 @@ export class MongoDataStore implements DataStore {
         sql_solved_count: 0,
         created_at: now,
       });
-    } else if (process.env.ADMIN_PASSWORD) {
-      await this.db.collection('students').updateOne(
-        { id: existingAdmin.id },
-        {
-          $set: {
-            email: adminEmail,
-            email_lower: adminEmail,
-            password_hash: hashSeedPassword(adminPassword),
-          },
-        }
-      );
+    } else {
+      // Apply only explicitly configured values to an existing admin. This lets
+      // deployments rotate either credential independently without resetting
+      // the other one to its default.
+      const updates: Record<string, string> = {};
+      if (process.env.ADMIN_EMAIL?.trim()) {
+        updates.email = adminEmail;
+        updates.email_lower = adminEmail;
+      }
+      if (process.env.ADMIN_PASSWORD) {
+        updates.password_hash = hashSeedPassword(adminPassword);
+      }
+      if (Object.keys(updates).length > 0) {
+        await this.db.collection('students').updateOne(
+          { id: existingAdmin.id },
+          { $set: updates }
+        );
+      }
     }
   }
 
@@ -221,6 +230,7 @@ export class MongoDataStore implements DataStore {
         .collection('ai_explanation_cache')
         .createIndex({ concept_id: 1, style: 1 }, { unique: true }),
       this.db.collection('curriculum_meta').createIndex({ key: 1 }, { unique: true }),
+      this.db.collection('discord_announcement_history').createIndex({ local_date: 1 }, { unique: true }),
     ]);
   }
 
@@ -1259,6 +1269,53 @@ export class MongoDataStore implements DataStore {
       .sort({ id: -1 })
       .limit(limit)
       .toArray();
+  }
+
+  async getDailyChampionCandidates(localDate: string): Promise<DailyChampionCandidate[]> {
+    const grouped = await this.db.collection<XpTransactionRow>('xp_transactions').aggregate<{
+      _id: number; concepts_completed: number; xp_earned: number;
+    }>([
+      { $match: { local_date: localDate } },
+      { $group: { _id: '$student_id', xp_earned: { $sum: '$xp_amount' },
+        concepts: { $addToSet: { $cond: [{ $eq: ['$source_type', 'concept_pass'] }, '$source_ref_id', null] } } } },
+      { $project: { xp_earned: 1, concepts_completed: { $size: { $setDifference: ['$concepts', [null]] } } } },
+      { $match: { concepts_completed: { $gt: 0 } } },
+      { $sort: { concepts_completed: -1, xp_earned: -1, _id: 1 } },
+    ]).toArray();
+    const students = await this.db.collection<StudentFullRow>('students').find(
+      { id: { $in: grouped.map((row) => row._id) } }, { projection: { _id: 0 } }
+    ).toArray();
+    const byId = new Map(students.map((student) => [student.id, student]));
+    return grouped.flatMap((row) => {
+      const student = byId.get(row._id);
+      return student ? [{ student_id: student.id, name: student.name, username: student.username,
+        discord_user_id: student.discord_user_id ?? null, concepts_completed: row.concepts_completed,
+        xp_earned: row.xp_earned }] : [];
+    });
+  }
+
+  async getDiscordAnnouncementHistory(localDate: string): Promise<DiscordAnnouncementHistoryRow | null> {
+    return this.db.collection<DiscordAnnouncementHistoryRow>('discord_announcement_history')
+      .findOne({ local_date: localDate }, { projection: { _id: 0 } });
+  }
+
+  async claimDiscordAnnouncement(row: DiscordAnnouncementHistoryRow): Promise<boolean> {
+    try {
+      const result = await this.db.collection<DiscordAnnouncementHistoryRow>('discord_announcement_history')
+        .updateOne({ local_date: row.local_date, status: { $in: ['failed', 'no_winner'] } },
+          { $set: { ...row, status: 'pending', message: null, error: null, sent_at: null } });
+      if (result.matchedCount) return true;
+      await this.db.collection<DiscordAnnouncementHistoryRow>('discord_announcement_history').insertOne({ ...row, status: 'pending' });
+      return true;
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) return false;
+      throw error;
+    }
+  }
+
+  async updateDiscordAnnouncement(row: DiscordAnnouncementHistoryRow): Promise<void> {
+    await this.db.collection<DiscordAnnouncementHistoryRow>('discord_announcement_history')
+      .updateOne({ local_date: row.local_date }, { $set: { ...row } });
   }
 
   async insertQuizAttempt(input: Omit<QuizAttemptRow, 'id'>): Promise<number> {

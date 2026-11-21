@@ -1,0 +1,333 @@
+{
+  "title": "DBMS Arena Knowledge Content and Challenge Test Accuracy Audit",
+  "auditDate": "2026-11-21",
+  "dataSource": "MongoDB Atlas is the running application source; the local SQLite curriculum was reconciled to MongoDB. Verified matching by unit/order/title for all concepts and by unit/concept/type/prompt for questions.",
+  "coverage": {
+    "conceptsChecked": 87,
+    "questionsChecked": 188,
+    "questionTypesByUnit": {
+      "1": {
+        "drag_drop": 4,
+        "matching": 6,
+        "mcq": 10,
+        "memory": 1,
+        "sql_challenge": 4,
+        "true_false": 8
+      },
+      "2": {
+        "matching": 1,
+        "mcq": 29,
+        "sql_challenge": 20,
+        "true_false": 11
+      },
+      "3": {
+        "matching": 1,
+        "mcq": 26,
+        "sql_challenge": 8,
+        "true_false": 20
+      },
+      "4": {
+        "drag_drop": 1,
+        "matching": 2,
+        "mcq": 18,
+        "true_false": 18
+      }
+    },
+    "mcqAnswerMappingsChecked": 83,
+    "sqlChallengesChecked": 32,
+    "otherQuestionTypesChecked": 73
+  },
+  "findings": {
+    "verifiedFactOrAmbiguityFindings": 29,
+    "items": [
+      "Historical lesson and test wording conflated Codd’s 1970 relational model with later SQL development and implied older navigational systems were replaced.",
+      "Tier deployment architecture and ANSI-SPARC three-schema abstraction were conflated.",
+      "DBMS capabilities were described as unconditional guarantees for consistency, concurrency, access control, and recovery.",
+      "DQL/DML taxonomy was presented as universal although sources use different classifications.",
+      "EXISTS performance and early-stop behavior were stated too universally.",
+      "ANY examples used non-standard list syntax and omitted empty-set/NULL semantics.",
+      "ALL examples omitted empty-set/NULL semantics and SQLite syntax limitations.",
+      "SQLite database-container descriptions implied server-style permissions and isolation boundaries.",
+      "DROP DATABASE wording implied IF EXISTS makes destructive commands safe.",
+      "SQLite DROP TABLE question omitted foreign-key action assumptions.",
+      "SQLite ALTER TABLE NOT NULL/DEFAULT limitation was described too broadly and incompletely.",
+      "Constraint integrity claims omitted engine enforcement/configuration conditions.",
+      "UNIQUE NULL behavior was not qualified by engine.",
+      "PRIMARY KEY non-NULL behavior omitted SQLite’s documented legacy exception.",
+      "Foreign-key enforcement in SQLite was described without noting it is disabled by default per connection.",
+      "CHECK wording omitted that UNKNOWN/NULL may pass unless NOT NULL is also enforced.",
+      "Index performance gains were stated as guaranteed rather than planner/workload-dependent.",
+      "Generated-key language implied gap-free sequences and blurred engine-specific behavior.",
+      "Date guidance implied all SQL engines share native date storage; SQLite has no dedicated date/time type.",
+      "Relational set compatibility wording suggested column names must match.",
+      "Selection-pushdown equivalence was stated without predicate/semantics conditions.",
+      "SQL was described as a literal practical superset of relational algebra and calculus.",
+      "ACID isolation and durability were overstated as serial execution and crash-proof behavior at all isolation/configuration levels.",
+      "1NF definition treated a declared primary key as part of the normal-form rule.",
+      "2NF wording focused only on the declared primary key and ignored composite alternate candidate keys.",
+      "BCNF example/outcome did not demonstrate a non-superkey determinant violating BCNF.",
+      "Concurrency-control definition implied all conflicting writes are prevented from overwriting, independent of the engine’s isolation/locking behavior.",
+      "Index introduction used an unconditional large-table performance analogy rather than explaining selectivity and query-planner choice.",
+      "UNIQUE introduction implied duplicate values are universally rejected without clarifying engine-specific NULL behavior."
+    ],
+    "incorrectOptionValueMappingsFound": 0,
+    "multipleOrDuplicateMcqOptionsFound": 0,
+    "emptyRequiredLessonFieldsAfterCorrection": 0
+  },
+  "corrections": {
+    "lessonConceptDocumentsUpdated": 27,
+    "questionRecordsReconciledInMainQuestionCorrectionPass": 43,
+    "mcqRecordsWithExactCorrectAnswerValueAndIndex": 83,
+    "correctedAnswerMappingMismatches": 0,
+    "knowledgeAndQuestionFindingsCorrected": 29
+  },
+  "adminReview": {
+    "sqlChallengesFlagged": 32,
+    "reason": "Each stored SQL challenge lacks a reference SQL result; current grading checks output column names/minimum row count, which cannot establish semantic correctness. These challenges are blocked from grading/rewards pending admin review.",
+    "questions": [
+      {
+        "id": 42,
+        "unit": 1,
+        "prompt": "Mini Challenge: Query the `students` table to list `student_id`, `full_name`, and `gpa` for up to 5 students.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 50,
+        "unit": 1,
+        "prompt": "Mini Challenge: Query the University `courses` table joined with `instructors` to display `course_code`, `title`, and instructor `full_name`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 62,
+        "unit": 1,
+        "prompt": "Mini Challenge: Unlike flat files, a DBMS joins tables dynamically. Display `full_name` and `dept_name` by joining `students` and `departments`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 73,
+        "unit": 1,
+        "prompt": "[Unit I Assessment] Query the ER-mapped database to list `dept_name` and how many `students` belong to each department (`student_count`).",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 75,
+        "unit": 2,
+        "prompt": "Mini Challenge: Run your first SQL query to select `full_name` and `email` from `students`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 81,
+        "unit": 2,
+        "prompt": "Mini Challenge: Write a SELECT query displaying `course_code` and `credits` from the `courses` table.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 83,
+        "unit": 2,
+        "prompt": "Mini Challenge: Select `full_name` and `gpa` from `students` where `gpa >= 3.8`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 85,
+        "unit": 2,
+        "prompt": "Mini Challenge: Find `full_name`, `year_level`, and `gpa` from `students` where `year_level >= 3` AND `gpa >= 3.8`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 87,
+        "unit": 2,
+        "prompt": "Mini Challenge: Select `full_name` and `dept_id` from `students` where `dept_id = 'EC' OR dept_id = 'MA'`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 91,
+        "unit": 2,
+        "prompt": "Mini Challenge: Select `full_name` and `salary` from `instructors` ordered from highest salary to lowest.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 101,
+        "unit": 2,
+        "prompt": "Mini Challenge: Query `students` to get the top 3 students (`full_name`, `gpa`) ordered by `gpa DESC`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 103,
+        "unit": 2,
+        "prompt": "Mini Challenge: Find `MIN(budget)` as `min_budget` and `MAX(budget)` as `max_budget` from `departments`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 105,
+        "unit": 2,
+        "prompt": "Mini Challenge: Write a query returning `COUNT(*) AS total_courses` from the `courses` table.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 107,
+        "unit": 2,
+        "prompt": "Mini Challenge: Calculate `ROUND(AVG(salary), 2) AS avg_salary` from `instructors`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 109,
+        "unit": 2,
+        "prompt": "Mini Challenge: Compute `SUM(budget) AS total_project_budget` from the `projects` table.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 111,
+        "unit": 2,
+        "prompt": "Mini Challenge: Find `course_code` and `title` from `courses` where `course_code LIKE 'CS%'`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 115,
+        "unit": 2,
+        "prompt": "Mini Challenge: Select `full_name` and `dept_id` from `students` where `dept_id IN ('CS', 'DS')`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 117,
+        "unit": 2,
+        "prompt": "Mini Challenge: Select `full_name` and `salary` from `instructors` where `salary BETWEEN 128000 AND 140000`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 123,
+        "unit": 2,
+        "prompt": "Mini Challenge: Inner join `courses` and `instructors` on `instructor_id` to show `course_code` and instructor `full_name`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 125,
+        "unit": 2,
+        "prompt": "Mini Challenge: Write a LEFT JOIN from `departments` to `projects` on `dept_id` showing `dept_name` and `project_name`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 127,
+        "unit": 2,
+        "prompt": "Mini Challenge: Run a RIGHT JOIN from `projects` to `departments` on `dept_id` displaying `project_name` and `dept_name`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 129,
+        "unit": 2,
+        "prompt": "Mini Challenge: Use CROSS JOIN between `departments` (`dept_id`) and `projects` (`project_name`) returning at least 9 combinations.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 131,
+        "unit": 2,
+        "prompt": "Mini Challenge: Write a Self Join on `students` (`s1`, `s2`) matching `s1.dept_id = s2.dept_id AND s1.student_id < s2.student_id` showing `s1.full_name AS student_a` and `s2.full_name AS student_b`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 134,
+        "unit": 2,
+        "prompt": "[Unit II Assessment] Query `students` joined with `departments` for `dept_id IN ('CS', 'DS')` and `gpa BETWEEN 3.6 AND 4.0`, displaying `full_name`, `dept_name`, and `gpa` sorted by `gpa DESC` (`LIMIT 4`).",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 136,
+        "unit": 3,
+        "prompt": "Mini Challenge: Combine `full_name` and `email` from `students` and `instructors` using `UNION ALL`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 138,
+        "unit": 3,
+        "prompt": "Mini Challenge: Group `courses` by `dept_id` and show `dept_id` and `COUNT(*) AS course_count`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 140,
+        "unit": 3,
+        "prompt": "Mini Challenge: Group `students` by `dept_id` and return `dept_id` and `ROUND(AVG(gpa), 2) AS avg_gpa` HAVING `AVG(gpa) >= 3.7`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 142,
+        "unit": 3,
+        "prompt": "Mini Challenge: Use `EXISTS` to select `dept_name` from `departments d` that have at least one matching row in `projects p`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 150,
+        "unit": 3,
+        "prompt": "Mini Challenge: Use `CASE` on `courses` to label `credits >= 4` as `'Major'` else `'Elective'` as `course_type`, selecting `course_code` and `course_type`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 152,
+        "unit": 3,
+        "prompt": "Mini Challenge: LEFT JOIN `departments` to `projects` and use `COALESCE(p.project_name, 'None') AS project_label` alongside `d.dept_name`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 184,
+        "unit": 3,
+        "prompt": "Mini Challenge: Run a SQL query returning `DATE('now') AS today_date` and `STRFTIME('%m', 'now') AS month_num`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      },
+      {
+        "id": 189,
+        "unit": 3,
+        "prompt": "[Unit III Assessment] Group `students` by `dept_id`, returning `dept_id`, `COUNT(*) AS n`, and `CASE WHEN AVG(gpa) >= 3.7 THEN 'High' ELSE 'Standard' END AS tier` HAVING `COUNT(*) >= 1`.",
+        "reason": "No reference SQL result is stored; current grading checks only output columns and minimum row count."
+      }
+    ],
+    "nonSqlQuestionsFlagged": 0
+  },
+  "aiGeneratedQuestions": {
+    "currentControls": "AI prompts require an authoritative source title/URL; server normalization requires HTTPS from the trusted-host allowlist and derives correctIndex from the exact correctAnswer option value, rejecting unmatched values. Regression-tested.",
+    "limitation": "The generator does not fetch and independently verify that the cited page supports the generated claim. Treat AI-generated factual questions as requiring human review before using them as authoritative scored tests."
+  },
+  "dataSafety": {
+    "collectionsWritten": [
+      "concepts",
+      "questions"
+    ],
+    "studentAndProgressCollectionsWritten": false,
+    "nonContentCollectionCountsChanged": false,
+    "accountsXpStreaksProgressPreserved": true,
+    "databaseReset": false
+  },
+  "verification": {
+    "lint": "passed",
+    "tests": "14 passed, 0 failed",
+    "persistedMongoConceptsVerified": 87,
+    "persistedMongoQuestionsVerified": 188,
+    "persistedMcqValueIndexMismatches": 0,
+    "nonContentCollectionCountsUnchanged": true
+  },
+  "backups": [
+    "data/backups/accuracy-audit-mongodb-before-2026-11-21T11-18-43-285Z.json",
+    "data/backups/accuracy-audit-sqlite-before-2026-11-21T11-18-21-986828+00-00.json",
+    "data/backups/accuracy-audit-sql-challenges-before-2026-11-21T11-25-26-516Z.json",
+    "data/backups/accuracy-audit-sql-challenges-before-2026-11-21T11-25-26-608828+00-00.json",
+    "data/backups/accuracy-audit-unit3-lessons-before-2026-11-21T11-28-29-810Z.json",
+    "data/backups/accuracy-audit-final-sqlite-questions-before-2026-11-21T12-00-22-251Z.json",
+    "data/backups/accuracy-audit-final-mongo-questions-before-2026-11-21T12-00-22-251Z.json",
+    "data/backups/accuracy-audit-final-sqlite-concepts-before-2026-11-21T12-00-22-251Z.json",
+    "data/backups/accuracy-audit-final-mongo-concepts-before-2026-11-21T12-00-22-251Z.json",
+    "data/backups/accuracy-audit-final-concepts-before-2026-11-21T12-11-08-814Z.json"
+  ],
+  "sources": [
+    "https://doi.org/10.1145/362384.362685",
+    "https://www.ibm.com/docs/en/zos-basic-skills?topic=now-history-ims-beginnings-nasa",
+    "https://www.ibm.com/docs/en/was-zos/9.0.5?topic=overview-three-tier-architectures",
+    "https://www.sqlite.org/quirks.html",
+    "https://www.sqlite.org/lang_createtable.html",
+    "https://www.sqlite.org/foreignkeys.html",
+    "https://www.sqlite.org/lang_altertable.html",
+    "https://www.sqlite.org/autoinc.html",
+    "https://www.sqlite.org/lang_datefunc.html",
+    "https://www.sqlite.org/queryplanner.html",
+    "https://www.sqlite.org/lang_select.html",
+    "https://www.postgresql.org/docs/current/functions-subquery.html",
+    "https://www.postgresql.org/docs/current/transaction-iso.html",
+    "https://cse.hkust.edu.hk/~leichen/courses/DSAA5012/Lectures/L10RelationalDBDesign2.pdf"
+  ]
+}

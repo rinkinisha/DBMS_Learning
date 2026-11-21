@@ -97,7 +97,7 @@ export default function App() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/dashboard');
+      const res = await apiFetch('/api/dashboard', { cache: 'no-store' });
       if (res.status === 401) {
         clearAuthToken();
         setCurrentUser(null);
@@ -237,6 +237,42 @@ export default function App() {
     if (data.streak?.streakIncreased) triggerStreakCelebration();
     await fetchDashboard();
   };
+
+  // The active lesson is opened from a dashboard snapshot. Replace that
+  // snapshot when fresh dashboard content arrives so an already-open lesson
+  // does not keep rendering old lesson_content.
+  useEffect(() => {
+    if (!dashboard) return;
+    setActiveLesson((current) => {
+      if (!current) return current;
+      const unit = dashboard.units.find((candidate) => candidate.id === current.unit.id);
+      if (!unit) return current;
+      const concept = current.isUnitAssessment
+        ? null
+        : unit.concepts.find((candidate) => candidate.id === current.concept?.id) ?? current.concept;
+      if (unit === current.unit && concept === current.concept) return current;
+      return { ...current, unit, concept };
+    });
+  }, [dashboard]);
+
+  // Lesson edits can be published by another admin session. Refresh the
+  // Learning Path when this tab becomes active again, without touching quiz
+  // or SQL Playground state.
+  useEffect(() => {
+    if (!currentUser || route !== 'learn') return;
+    let lastRefreshAt = 0;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastRefreshAt < 1000) return;
+      lastRefreshAt = Date.now();
+      void fetchDashboard();
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [currentUser?.id, route, fetchDashboard]);
 
   if (!authChecked) {
     return (

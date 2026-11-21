@@ -9,6 +9,10 @@ export function normalizeAnswer(value: unknown): string {
 export function validateTheoryAnswer(type: TheoryChallengeType, expected: Record<string, unknown>, answer: unknown): boolean {
   if (type === 'mcq' || type === 'scenario') {
     const selectedIndex = (answer as { selectedIndex?: unknown } | null)?.selectedIndex;
+    if (typeof expected.correctAnswer === 'string' && Array.isArray(expected.options)) {
+      return typeof selectedIndex === 'number' && Number.isInteger(selectedIndex) &&
+        expected.options[selectedIndex] === expected.correctAnswer;
+    }
     return typeof selectedIndex === 'number' && Number.isInteger(selectedIndex) && selectedIndex === expected.correctIndex;
   }
   if (type === 'true_false') return (answer as { value?: unknown } | null)?.value === expected.correctBoolean;

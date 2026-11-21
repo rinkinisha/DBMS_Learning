@@ -187,6 +187,8 @@ export function ConceptLessonModal({
   ];
 
   const lc = concept?.lesson_content;
+  const sqlApplicable = Boolean(concept?.practical_sql?.trim())
+    && concept!.practical_sql.trim().toLowerCase() !== 'not applicable for this concept';
 
   return (
     <div
@@ -251,6 +253,11 @@ export function ConceptLessonModal({
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
           {stage === 'brief' && concept && (
             <div className="space-y-5">
+              {lc?.simpleIntro && (
+                <div className="p-5 rounded-2xl bg-sky-50 border border-sky-200">
+                  <p className="text-slate-800 text-sm sm:text-base leading-relaxed">{lc.simpleIntro}</p>
+                </div>
+              )}
               {/* Definition */}
               <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-2">
                 <div className="text-xs font-semibold text-sky-700">Definition</div>
@@ -259,33 +266,24 @@ export function ConceptLessonModal({
                 </p>
               </div>
 
-              {/* Key Definition & Real-World Example */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3">
-                  <div className="text-xs font-semibold text-slate-700">Key Definition</div>
-                  <div className="space-y-2.5">
-                    {(lc?.definitions && lc.definitions.length > 0
-                      ? lc.definitions
-                      : [{ term: concept.title, meaning: concept.definition_text }]
-                    ).map((d, i) => (
-                      <div key={i} className="text-sm">
-                        <span className="font-semibold text-slate-900">{d.term}: </span>
-                        <span className="text-slate-600">{d.meaning}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3">
+                <div className="text-xs font-semibold text-slate-700">Real-World Example</div>
+                <ul className="list-disc pl-4 space-y-2 text-sm text-slate-700">
+                  {(lc?.realWorldExamples && lc.realWorldExamples.length > 0
+                    ? lc.realWorldExamples
+                    : [concept.example_text]
+                  ).map((ex, i) => <li key={i}>{ex}</li>)}
+                </ul>
+              </div>
 
-                <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3">
-                  <div className="text-xs font-semibold text-slate-700">Real-World Example</div>
-                  <ul className="list-disc pl-4 space-y-2 text-sm text-slate-700">
-                    {(lc?.realWorldExamples && lc.realWorldExamples.length > 0
-                      ? lc.realWorldExamples
-                      : [concept.example_text]
-                    ).map((ex, i) => (
-                      <li key={i}>{ex}</li>
-                    ))}
-                  </ul>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-2.5">
+                  <div className="text-xs font-semibold text-emerald-900">Advantages</div>
+                  {lc?.advantages?.length ? <ul className="list-disc pl-4 space-y-1.5 text-sm text-slate-800">{lc.advantages.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="text-sm text-slate-500">No advantages have been added for this topic yet.</p>}
+                </div>
+                <div className="p-5 rounded-2xl bg-amber-50 border border-amber-200 space-y-2.5">
+                  <div className="text-xs font-semibold text-amber-900">Disadvantages</div>
+                  {lc?.disadvantages?.length ? <ul className="list-disc pl-4 space-y-1.5 text-sm text-slate-800">{lc.disadvantages.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="text-sm text-slate-500">No disadvantages have been added for this topic yet.</p>}
                 </div>
               </div>
 
@@ -415,74 +413,57 @@ export function ConceptLessonModal({
           {stage === 'practical' && concept && (
             <div className="space-y-6">
               <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="font-display font-bold text-lg text-slate-900">Practical Task</h3>
-                    <p className="text-sm text-slate-600">Write and run a short SQL solution, then submit it for AI feedback.</p>
+                {lc?.practicalExamples?.map((example, index) => (
+                  <div key={index} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+                    <p className="text-xs font-semibold text-slate-700">{example.label || `Worked example ${index + 1}`}</p>
+                    {example.snippet && example.snippet.toLowerCase() !== 'not applicable for this concept' && (
+                      <pre className="overflow-x-auto rounded-lg bg-slate-900 p-3 font-mono text-xs text-emerald-300">{example.snippet}</pre>
+                    )}
+                    {example.outcome && <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{example.outcome}</p>}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onOpenPlaygroundWithSql(concept.practical_sql, concept.id)}
-                    className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
-                  >
-                    Open in SQL Playground
-                  </button>
-                </div>
+                ))}
 
-                <p className="text-sm text-slate-700"><strong>Task:</strong> Write a short SQL query that demonstrates <strong>{concept.title}</strong> using the practice database. Run it to see the result, then submit your query for feedback.</p>
-                <textarea aria-label="Your SQL answer" value={practiceSql} onChange={(e) => setPracticeSql(e.target.value)} placeholder="Write your SQL here..." rows={6} className="w-full p-4 rounded-xl bg-slate-900 text-emerald-300 font-mono text-sm outline-none" />
-
-                <div className="flex items-center gap-3">
-                    <button
-                    type="button"
-                    onClick={runDemoSql}
-                    disabled={demoLoading}
-                    className="btn-tactile px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold border-b-4 border-sky-800 flex items-center gap-2 cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                    <span>{demoLoading ? 'Running...' : 'Run SQL'}</span>
-                  </button>
-                  <button type="button" onClick={submitPractice} disabled={practiceBusy || !practiceSql.trim()} className="btn-tactile px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold disabled:opacity-50">{practiceBusy ? 'Getting feedback...' : 'Submit for AI Review'}</button>
-                </div>
-
-                {practiceFeedback && <div className="p-4 rounded-xl bg-sky-50 border border-sky-200 text-sm text-slate-800 whitespace-pre-wrap">{practiceFeedback}</div>}
-
-                {demoError && (
-                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-mono text-rose-800">
-                    {demoError}
-                  </div>
-                )}
-
-                {demoResult && (
-                  <div className="rounded-xl border border-slate-200 overflow-x-auto">
-                    <div className="px-4 py-2 bg-slate-100 text-xs text-slate-600 flex justify-between tabular-nums">
-                      <span>{demoResult.rowCount} row(s)</span>
-                      <span>{demoResult.executionMs} ms</span>
+                {sqlApplicable ? <>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-display font-bold text-lg text-slate-900">Practical SQL</h3>
+                      <p className="text-sm text-slate-600">Write and run a query, then submit it for AI feedback.</p>
                     </div>
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200">
-                          {demoResult.columns.map((col) => (
-                            <th key={col} className="px-4 py-2.5 font-mono font-semibold text-slate-900">
-                              {col}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {demoResult.rows.map((r, ri) => (
-                          <tr key={ri} className="hover:bg-slate-50">
-                            {r.map((cell, ci) => (
-                              <td key={ci} className="px-4 py-2 font-mono text-slate-700 tabular-nums">
-                                {String(cell ?? 'NULL')}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <button
+                      type="button"
+                      onClick={() => onOpenPlaygroundWithSql(concept.practical_sql, concept.id)}
+                      className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
+                    >
+                      Open in SQL Playground
+                    </button>
                   </div>
-                )}
+
+                  <p className="text-sm text-slate-700"><strong>Task:</strong> Write a short SQL query that demonstrates <strong>{concept.title}</strong> using the practice database. Run it to see the result, then submit your query for feedback.</p>
+                  <textarea aria-label="Your SQL answer" value={practiceSql} onChange={(e) => setPracticeSql(e.target.value)} placeholder="Write your SQL here..." rows={6} className="w-full p-4 rounded-xl bg-slate-900 text-emerald-300 font-mono text-sm outline-none" />
+
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={runDemoSql} disabled={demoLoading} className="btn-tactile px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold border-b-4 border-sky-800 flex items-center gap-2 cursor-pointer">
+                      <Play className="w-3.5 h-3.5" />
+                      <span>{demoLoading ? 'Running...' : 'Run SQL'}</span>
+                    </button>
+                    <button type="button" onClick={submitPractice} disabled={practiceBusy || !practiceSql.trim()} className="btn-tactile px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold disabled:opacity-50">{practiceBusy ? 'Getting feedback...' : 'Submit for AI Review'}</button>
+                  </div>
+
+                  {practiceFeedback && <div className="p-4 rounded-xl bg-sky-50 border border-sky-200 text-sm text-slate-800 whitespace-pre-wrap">{practiceFeedback}</div>}
+                  {demoError && <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-mono text-rose-800">{demoError}</div>}
+                  {demoResult && (
+                    <div className="rounded-xl border border-slate-200 overflow-x-auto">
+                      <div className="px-4 py-2 bg-slate-100 text-xs text-slate-600 flex justify-between tabular-nums"><span>{demoResult.rowCount} row(s)</span><span>{demoResult.executionMs} ms</span></div>
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead><tr className="bg-slate-50 border-b border-slate-200">{demoResult.columns.map((col) => <th key={col} className="px-4 py-2.5 font-mono font-semibold text-slate-900">{col}</th>)}</tr></thead>
+                        <tbody className="divide-y divide-slate-100">{demoResult.rows.map((row, rowIndex) => <tr key={rowIndex} className="hover:bg-slate-50">{row.map((cell, cellIndex) => <td key={cellIndex} className="px-4 py-2 font-mono text-slate-700 tabular-nums">{String(cell ?? 'NULL')}</td>)}</tr>)}</tbody>
+                      </table>
+                    </div>
+                  )}
+                </> : <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                  <p className="text-sm font-semibold text-indigo-900">Theory concept · SQL not applicable</p>
+                  <p className="mt-1 text-sm text-slate-700">This lesson is taught through the worked example above; it does not require a SQL query.</p>
+                </div>}
               </div>
 
               <div className="flex justify-between">

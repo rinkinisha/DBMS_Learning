@@ -15,6 +15,8 @@ export interface ConceptLessonContent {
   detailedExplanation: string;
   definitions: { term: string; meaning: string }[];
   realWorldExamples: string[];
+  advantages?: string[];
+  disadvantages?: string[];
   practicalExamples: { label: string; snippet: string; outcome: string }[];
   visualSteps: { step: string; title: string; detail: string }[];
   commonMistakes: string[];
@@ -89,6 +91,7 @@ export interface Student {
   role: 'student' | 'admin';
   is_demo?: boolean;
   timezone?: string;
+  discord_user_id?: string | null;
   sql_solved_count?: number;
   created_at?: string;
 }
@@ -215,13 +218,29 @@ export interface SqlExecutionResult {
   rowCount: number;
   executionMs: number;
   message?: string;
+  truncated?: boolean;
 }
 
 export interface PracticeTableInfo {
   name: string;
-  columns: { name: string; type: string; pk: boolean }[];
+  objectType: 'table' | 'view';
+  columns: {
+    name: string;
+    type: string;
+    pk: boolean;
+    primaryKeyOrder: number;
+    notNull: boolean;
+    defaultValue: string | null;
+  }[];
+  foreignKeys: {
+    id: number;
+    column: string;
+    referencedTable: string;
+    referencedColumn: string;
+    onUpdate: string;
+    onDelete: string;
+  }[];
   rowCount: number;
-  sampleRows: (string | number | null)[][];
 }
 
 export interface DashboardPayload {

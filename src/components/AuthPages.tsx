@@ -42,6 +42,7 @@ export function AuthPages({ mode, onNavigateMode, onAuthSuccess }: AuthPagesProp
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
+  const [signupDiscordId, setSignupDiscordId] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showSignupPwd, setShowSignupPwd] = useState(false);
@@ -117,6 +118,7 @@ export function AuthPages({ mode, onNavigateMode, onAuthSuccess }: AuthPagesProp
           password: signupPassword,
           confirmPassword,
           timezone: tz,
+          discord_user_id: signupDiscordId.trim(),
         }),
       });
       const data = await res.json();
@@ -549,6 +551,14 @@ export function AuthPages({ mode, onNavigateMode, onAuthSuccess }: AuthPagesProp
                     className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:border-emerald-600"
                   />
                 </div>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="signup-discord" className="block text-xs font-semibold text-slate-700">Discord User ID <span className="font-normal text-slate-400">(optional)</span></label>
+                <input id="signup-discord" type="text" inputMode="numeric" pattern="[0-9]{17,20}" maxLength={20}
+                  value={signupDiscordId} onChange={(e) => setSignupDiscordId(e.target.value)}
+                  placeholder="17–20 digit ID" className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:border-emerald-600" />
+                <p className="text-[10px] text-slate-500">Used to mention you if you become the daily Learning Champion.</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">

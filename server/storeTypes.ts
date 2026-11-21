@@ -81,6 +81,7 @@ export interface StudentFullRow {
   is_primary: number;
   is_demo: number;
   timezone: string;
+  discord_user_id?: string | null;
   streak_history_json: string;
   streak_updated_at: string | null;
   sql_solved_count: number;
@@ -142,6 +143,28 @@ export interface XpTransactionRow {
   gems_amount: number;
   local_date: string;
   created_at: string;
+}
+
+export interface DailyChampionCandidate {
+  student_id: number;
+  name: string;
+  username: string;
+  discord_user_id: string | null;
+  concepts_completed: number;
+  xp_earned: number;
+}
+
+export interface DiscordAnnouncementHistoryRow {
+  local_date: string;
+  status: 'pending' | 'sent' | 'failed' | 'no_winner';
+  winners_json: string;
+  concepts_completed: number;
+  xp_earned: number;
+  message: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  sent_at: string | null;
 }
 
 export interface QuizAttemptRow {
@@ -351,6 +374,10 @@ export interface DataStore {
   insertXpTransaction(input: Omit<XpTransactionRow, 'id'>): Promise<number>;
   sumStudentXpSince(studentId: number, sinceLocalDate: string): Promise<number>;
   getRecentXpTransactions(studentId: number, limit: number): Promise<XpTransactionRow[]>;
+  getDailyChampionCandidates(localDate: string): Promise<DailyChampionCandidate[]>;
+  getDiscordAnnouncementHistory(localDate: string): Promise<DiscordAnnouncementHistoryRow | null>;
+  claimDiscordAnnouncement(row: DiscordAnnouncementHistoryRow): Promise<boolean>;
+  updateDiscordAnnouncement(row: DiscordAnnouncementHistoryRow): Promise<void>;
 
   insertQuizAttempt(input: Omit<QuizAttemptRow, 'id'>): Promise<number>;
   getStudentQuizStats(studentId: number): Promise<{ avgAcc: number; totalAttempts: number }>;

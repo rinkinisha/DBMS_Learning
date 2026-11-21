@@ -1,0 +1,432 @@
+[
+  {
+    "id": 46,
+    "unit_id": 5,
+    "concept_id": 21,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Check this statement on DBMS advantages:",
+    "payload_json": "{\"statement\":\"A DBMS enforces role-based access control so unauthorized users cannot view sensitive columns like salaries.\",\"correct\":true}",
+    "explanation": "True! Fine-grained security and access control are core advantages of a DBMS."
+  },
+  {
+    "id": 78,
+    "unit_id": 6,
+    "concept_id": 35,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "Which SQL sublanguage contains CREATE TABLE, ALTER TABLE, and DROP TABLE?",
+    "payload_json": "{\"options\":[\"DDL (Data Definition Language)\",\"DML (Data Manipulation Language)\",\"DCL (Data Control Language)\"],\"correctIndex\":0,\"correctAnswer\":\"DDL (Data Definition Language)\"}",
+    "explanation": "DDL commands define or alter database structure."
+  },
+  {
+    "id": 79,
+    "unit_id": 6,
+    "concept_id": 35,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL Overview & Command Sublanguages:",
+    "payload_json": "{\"statement\":\"DQL = SELECT; DML = INSERT/UPDATE/DELETE; DDL = CREATE/ALTER/DROP; TCL = COMMIT/ROLLBACK.\",\"correct\":true}",
+    "explanation": "DDL commands define or alter database structure."
+  },
+  {
+    "id": 93,
+    "unit_id": 6,
+    "concept_id": 42,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL INSERT INTO:",
+    "payload_json": "{\"statement\":\"Always specify `(columns)` before `VALUES (...)` when inserting rows.\",\"correct\":true}",
+    "explanation": "Explicit column lists prevent positional mismatches as schemas evolve."
+  },
+  {
+    "id": 99,
+    "unit_id": 6,
+    "concept_id": 45,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL DELETE:",
+    "payload_json": "{\"statement\":\"DELETE removes rows (always use WHERE!); DROP removes the entire table.\",\"correct\":true}",
+    "explanation": "DELETE is DML (row data); DROP is DDL (table structure)."
+  },
+  {
+    "id": 121,
+    "unit_id": 6,
+    "concept_id": 56,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on Introduction to SQL Joins:",
+    "payload_json": "{\"statement\":\"JOIN stitches related tables together via `ON tableA.key = tableB.key`.\",\"correct\":true}",
+    "explanation": "Foreign Key to Primary Key equality is the backbone of relational joins."
+  },
+  {
+    "id": 143,
+    "unit_id": 7,
+    "concept_id": 66,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "For the non-empty, non-NULL comparison set {10, 20, 30}, what does `x > ANY` require?",
+    "payload_json": "{\"options\":[\"x must be greater than at least one set value (so x > 10 for this set)\",\"x > 30 (greater than every item)\",\"x = 20\"],\"correctIndex\":0,\"correctAnswer\":\"x must be greater than at least one set value (so x > 10 for this set)\"}",
+    "explanation": "ANY is true when the comparison succeeds for at least one value. For this non-empty set with no NULLs, x only needs to be greater than its smallest value, 10. In SQL, ANY is applied to a subquery, not a comma-separated literal list."
+  },
+  {
+    "id": 144,
+    "unit_id": 7,
+    "concept_id": 66,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL ANY Operator:",
+    "payload_json": "{\"statement\":\"`> ANY` means greater than at least one value (i.e., `> MIN`); `= ANY` equals `IN`.\",\"correct\":true}",
+    "explanation": "To beat ANY item in {10, 20, 30}, x only needs to exceed the smallest item (10)."
+  },
+  {
+    "id": 146,
+    "unit_id": 7,
+    "concept_id": 67,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL ALL Operator:",
+    "payload_json": "{\"statement\":\"`> ALL` means greater than every value (equivalent to `> MAX`); beware of NULLs in the subquery.\",\"correct\":true}",
+    "explanation": "ALL requires the condition to hold against the largest element (30) as well as all others."
+  },
+  {
+    "id": 153,
+    "unit_id": 7,
+    "concept_id": 71,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "Why do engineering teams maintain separate databases like `app_dev` and `app_prod`?",
+    "payload_json": "{\"options\":[\"To isolate development experiments from live production user data\",\"Because SQL tables can only hold 10 rows each\",\"To disable Primary Keys in production\"],\"correctIndex\":0,\"correctAnswer\":\"To isolate development experiments from live production user data\"}",
+    "explanation": "Separate database containers prevent test scripts from damaging live production records."
+  },
+  {
+    "id": 154,
+    "unit_id": 7,
+    "concept_id": 71,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL Database Concepts:",
+    "payload_json": "{\"statement\":\"A Database container groups related tables, views, and permissions under one named boundary.\",\"correct\":true}",
+    "explanation": "Separate database containers prevent test scripts from damaging live production records."
+  },
+  {
+    "id": 155,
+    "unit_id": 7,
+    "concept_id": 72,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "Which DDL command creates a new database container in MySQL and PostgreSQL?",
+    "payload_json": "{\"options\":[\"CREATE DATABASE db_name;\",\"INSERT DATABASE db_name;\",\"SELECT NEW DATABASE;\"],\"correctIndex\":0,\"correctAnswer\":\"CREATE DATABASE db_name;\"}",
+    "explanation": "CREATE DATABASE is the standard DDL statement for creating a database catalog."
+  },
+  {
+    "id": 156,
+    "unit_id": 7,
+    "concept_id": 72,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL CREATE DATABASE:",
+    "payload_json": "{\"statement\":\"`CREATE DATABASE name;` initializes a new database container (embedded SQLite creates files directly).\",\"correct\":true}",
+    "explanation": "CREATE DATABASE is the standard DDL statement for creating a database catalog."
+  },
+  {
+    "id": 157,
+    "unit_id": 7,
+    "concept_id": 73,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "What happens when `DROP DATABASE test_db;` executes?",
+    "payload_json": "{\"options\":[\"The entire test_db container and every table/row inside it are permanently deleted\",\"Only empty tables are deleted\",\"Rows are moved to a recycle bin table automatically\"],\"correctIndex\":0,\"correctAnswer\":\"The entire test_db container and every table/row inside it are permanently deleted\"}",
+    "explanation": "DROP DATABASE irreversibly removes the database and all its contents."
+  },
+  {
+    "id": 158,
+    "unit_id": 7,
+    "concept_id": 73,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL DROP DATABASE:",
+    "payload_json": "{\"statement\":\"DROP DATABASE permanently deletes the entire database—always use backups and `IF EXISTS`.\",\"correct\":true}",
+    "explanation": "DROP DATABASE irreversibly removes the database and all its contents."
+  },
+  {
+    "id": 161,
+    "unit_id": 7,
+    "concept_id": 75,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "In SQLite with foreign-key enforcement enabled and enrollment rows referencing courses, what happens when you run `DROP TABLE courses;`?",
+    "payload_json": "{\"options\":[\"Referential integrity blocks the drop unless dependent references are handled first\",\"It renames courses to old_courses\",\"It only deletes rows with grade NULL\"],\"correctIndex\":0,\"correctAnswer\":\"Referential integrity blocks the drop unless dependent references are handled first\"}",
+    "explanation": "SQLite performs an implicit delete before dropping the table. With enforcement enabled, existing child rows that still reference the parent cause a foreign-key violation, so the drop fails."
+  },
+  {
+    "id": 162,
+    "unit_id": 7,
+    "concept_id": 75,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL DROP TABLE:",
+    "payload_json": "{\"statement\":\"DROP TABLE deletes both rows and schema; use `IF EXISTS` for safe migration scripts.\",\"correct\":true}",
+    "explanation": "Foreign Key constraints protect parent tables from accidental deletion."
+  },
+  {
+    "id": 163,
+    "unit_id": 7,
+    "concept_id": 76,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "When using `ALTER TABLE students ADD COLUMN status TEXT NOT NULL`, what else must you provide if rows already exist?",
+    "payload_json": "{\"options\":[\"A DEFAULT value\",\"A CROSS JOIN\",\"A DROP DATABASE\"],\"correctIndex\":0,\"correctAnswer\":\"A DEFAULT value\"}",
+    "explanation": "Existing rows need a DEFAULT value so the new NOT NULL column is not empty."
+  },
+  {
+    "id": 164,
+    "unit_id": 7,
+    "concept_id": 76,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL ALTER TABLE:",
+    "payload_json": "{\"statement\":\"ALTER TABLE evolves live schemas; supply a DEFAULT when adding NOT NULL columns.\",\"correct\":true}",
+    "explanation": "Existing rows need a DEFAULT value so the new NOT NULL column is not empty."
+  },
+  {
+    "id": 166,
+    "unit_id": 7,
+    "concept_id": 77,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL Constraints Overview:",
+    "payload_json": "{\"statement\":\"Constraints guarantee data integrity at the database layer regardless of which client writes data.\",\"correct\":true}",
+    "explanation": "Database-level constraints protect data integrity across all clients and migrations."
+  },
+  {
+    "id": 169,
+    "unit_id": 7,
+    "concept_id": 79,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "How many UNIQUE constraints can a single table have compared to PRIMARY KEY constraints?",
+    "payload_json": "{\"options\":[\"Multiple UNIQUE constraints, but only one PRIMARY KEY\",\"Only one UNIQUE constraint and multiple PRIMARY KEYs\",\"Zero UNIQUE constraints if a PRIMARY KEY exists\"],\"correctIndex\":0,\"correctAnswer\":\"Multiple UNIQUE constraints, but only one PRIMARY KEY\"}",
+    "explanation": "A table has at most one Primary Key, plus as many UNIQUE Alternate Keys as needed."
+  },
+  {
+    "id": 170,
+    "unit_id": 7,
+    "concept_id": 79,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL UNIQUE Constraint:",
+    "payload_json": "{\"statement\":\"UNIQUE prevents duplicate values and allows multiple unique columns per table.\",\"correct\":true}",
+    "explanation": "A table has at most one Primary Key, plus as many UNIQUE Alternate Keys as needed."
+  },
+  {
+    "id": 171,
+    "unit_id": 7,
+    "concept_id": 80,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "Which two properties does a PRIMARY KEY automatically enforce?",
+    "payload_json": "{\"options\":[\"UNIQUE and NOT NULL\",\"DEFAULT and LIKE\",\"CHECK and UNION\"],\"correctIndex\":0,\"correctAnswer\":\"UNIQUE and NOT NULL\"}",
+    "explanation": "Entity Integrity requires Primary Keys to be strictly unique and never NULL."
+  },
+  {
+    "id": 172,
+    "unit_id": 7,
+    "concept_id": 80,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL PRIMARY KEY Constraint:",
+    "payload_json": "{\"statement\":\"PRIMARY KEY = UNIQUE + NOT NULL; identifies every row uniquely (single or composite).\",\"correct\":true}",
+    "explanation": "Entity Integrity requires Primary Keys to be strictly unique and never NULL."
+  },
+  {
+    "id": 173,
+    "unit_id": 7,
+    "concept_id": 81,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "What does Referential Integrity via FOREIGN KEY prevent?",
+    "payload_json": "{\"options\":[\"Inserting a child record pointing to a non-existent parent Primary Key\",\"Sorting rows with ORDER BY\",\"Using aliases in SELECT\"],\"correctIndex\":0,\"correctAnswer\":\"Inserting a child record pointing to a non-existent parent Primary Key\"}",
+    "explanation": "Foreign Keys guarantee every non-NULL link points to a valid parent row."
+  },
+  {
+    "id": 174,
+    "unit_id": 7,
+    "concept_id": 81,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL FOREIGN KEY Constraint:",
+    "payload_json": "{\"statement\":\"FOREIGN KEY enforces Referential Integrity across related tables.\",\"correct\":true}",
+    "explanation": "Foreign Keys guarantee every non-NULL link points to a valid parent row."
+  },
+  {
+    "id": 175,
+    "unit_id": 7,
+    "concept_id": 82,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "Which constraint ensures `credits` in `courses` is always between 1 and 6?",
+    "payload_json": "{\"options\":[\"CHECK (credits BETWEEN 1 AND 6)\",\"UNIQUE (credits)\",\"FOREIGN KEY (credits)\"],\"correctIndex\":0,\"correctAnswer\":\"CHECK (credits BETWEEN 1 AND 6)\"}",
+    "explanation": "CHECK enforces custom numeric/value domain rules."
+  },
+  {
+    "id": 176,
+    "unit_id": 7,
+    "concept_id": 82,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL CHECK Constraint:",
+    "payload_json": "{\"statement\":\"CHECK validates custom value ranges and business rules on every row write.\",\"correct\":true}",
+    "explanation": "CHECK enforces custom numeric/value domain rules."
+  },
+  {
+    "id": 179,
+    "unit_id": 7,
+    "concept_id": 84,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "What is the main trade-off of adding many indexes to a heavily written table?",
+    "payload_json": "{\"options\":[\"Suitable SELECT queries may get faster, while writes need to maintain indexes and indexes use extra storage\",\"Primary Keys stop working\",\"Tables lose all rows\"],\"correctIndex\":0,\"correctAnswer\":\"Suitable SELECT queries may get faster, while writes need to maintain indexes and indexes use extra storage\"}",
+    "explanation": "A suitable index can speed up some SELECT queries, but indexes consume storage and INSERT, UPDATE, and DELETE operations must maintain them."
+  },
+  {
+    "id": 180,
+    "unit_id": 7,
+    "concept_id": 84,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL CREATE INDEX:",
+    "payload_json": "{\"statement\":\"CREATE INDEX accelerates reads (`WHERE`/`JOIN`), trading slight write overhead & disk space.\",\"correct\":true}",
+    "explanation": "Every write must keep associated B-tree indexes synchronized."
+  },
+  {
+    "id": 181,
+    "unit_id": 7,
+    "concept_id": 85,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "In SQLite, if a committed row with ID 5 is deleted from an `INTEGER PRIMARY KEY AUTOINCREMENT` table and 5 was the largest ID used, what ID will the next automatic insert normally receive?",
+    "payload_json": "{\"options\":[\"6 (the previously committed ID is not reused)\",\"5 (it backfills deleted IDs)\",\"0\"],\"correctIndex\":0,\"correctAnswer\":\"6 (the previously committed ID is not reused)\"}",
+    "explanation": "SQLite AUTOINCREMENT prevents reuse of row IDs from previously committed rows. It does not promise gap-free IDs; here the prior maximum was 5, so the next automatic ID is normally 6."
+  },
+  {
+    "id": 182,
+    "unit_id": 7,
+    "concept_id": 85,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Quick Check on SQL AUTO INCREMENT:",
+    "payload_json": "{\"statement\":\"AUTO INCREMENT / IDENTITY generates unique Primary Key numbers automatically on INSERT.\",\"correct\":true}",
+    "explanation": "Auto-increment counters advance monotonically to avoid key reuse collisions."
+  },
+  {
+    "id": 187,
+    "unit_id": 7,
+    "concept_id": null,
+    "is_unit_assessment": 1,
+    "question_type": "matching",
+    "prompt": "[Unit III Assessment] Match each SQL Constraint to what it guarantees:",
+    "payload_json": "{\"pairs\":[{\"left\":\"PRIMARY KEY\",\"right\":\"Unique + NOT NULL row identifier\"},{\"left\":\"FOREIGN KEY\",\"right\":\"Referential integrity to parent PK\"},{\"left\":\"CHECK\",\"right\":\"Custom boolean domain validation\"},{\"left\":\"DEFAULT\",\"right\":\"Fallback value when omitted on INSERT\"}]}",
+    "explanation": "SQL constraints protect entity, domain, and referential integrity."
+  },
+  {
+    "id": 193,
+    "unit_id": 8,
+    "concept_id": 89,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Selection (σ) and Projection (π):",
+    "payload_json": "{\"statement\":\"σ = row filter (WHERE); π = column picker with duplicate elimination (SELECT DISTINCT).\",\"correct\":true}",
+    "explanation": "First σ filters rows where year_level = 3, then π projects full_name."
+  },
+  {
+    "id": 195,
+    "unit_id": 8,
+    "concept_id": 90,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Relational Algebra Set Operations (∪, ∩, −, ×):",
+    "payload_json": "{\"statement\":\"∪ (UNION), ∩ (INTERSECT), − (EXCEPT) require matching column schemas; × (CROSS JOIN) does not.\",\"correct\":true}",
+    "explanation": "EXCEPT (or MINUS in Oracle) returns rows in R that are not present in S."
+  },
+  {
+    "id": 205,
+    "unit_id": 8,
+    "concept_id": 95,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Relational Algebra Semantics:",
+    "payload_json": "{\"statement\":\"Semantics ensures query rewrites like Selection Pushdown produce 100% identical outputs faster.\",\"correct\":true}",
+    "explanation": "Filtering rows early minimizes intermediate join size with exact semantic equivalence."
+  },
+  {
+    "id": 211,
+    "unit_id": 8,
+    "concept_id": 98,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Relational Comparison (Algebra vs Calculus vs SQL):",
+    "payload_json": "{\"statement\":\"Algebra = procedural; Calculus = declarative logic; SQL = practical superset of both.\",\"correct\":true}",
+    "explanation": "Codd’s Theorem establishes exact equivalence between Relational Algebra and Safe Relational Calculus."
+  },
+  {
+    "id": 213,
+    "unit_id": 8,
+    "concept_id": 99,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Transaction Management:",
+    "payload_json": "{\"statement\":\"Transactions group multiple reads/writes into one safe unit ending in COMMIT or ROLLBACK.\",\"correct\":true}",
+    "explanation": "COMMIT finalizes and persists the transaction; ROLLBACK undoes it."
+  },
+  {
+    "id": 214,
+    "unit_id": 8,
+    "concept_id": 100,
+    "is_unit_assessment": 0,
+    "question_type": "mcq",
+    "prompt": "Which ACID property guarantees that a committed transaction survives a sudden server power outage?",
+    "payload_json": "{\"options\":[\"Durability\",\"Isolation\",\"Consistency\"],\"correctIndex\":0,\"correctAnswer\":\"Durability\"}",
+    "explanation": "Durability ensures committed writes are flushed to non-volatile storage/logs."
+  },
+  {
+    "id": 215,
+    "unit_id": 8,
+    "concept_id": 100,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify ACID Properties:",
+    "payload_json": "{\"statement\":\"A = All-or-nothing; C = Valid constraints; I = No concurrency interference; D = Crash-proof.\",\"correct\":true}",
+    "explanation": "Durability ensures committed writes are flushed to non-volatile storage/logs."
+  },
+  {
+    "id": 221,
+    "unit_id": 8,
+    "concept_id": 103,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Second Normal Form (2NF):",
+    "payload_json": "{\"statement\":\"2NF = 1NF + No Partial Dependencies (non-key columns depend on the whole PK).\",\"correct\":true}",
+    "explanation": "A single-attribute key has no proper non-empty subset, so partial dependency requires a composite key."
+  },
+  {
+    "id": 223,
+    "unit_id": 8,
+    "concept_id": 104,
+    "is_unit_assessment": 0,
+    "question_type": "true_false",
+    "prompt": "Verify Third Normal Form (3NF):",
+    "payload_json": "{\"statement\":\"For every non-trivial functional dependency X -> A, a relation is in 3NF if X is a superkey or A is a prime attribute (part of some candidate key).\",\"correct\":true}",
+    "explanation": "A non-trivial dependency satisfies 3NF when its determinant is a superkey or its dependent attribute is prime. The familiar “no transitive non-key dependency” rule is a useful shortcut but omits the prime-attribute exception."
+  },
+  {
+    "id": 227,
+    "unit_id": 8,
+    "concept_id": null,
+    "is_unit_assessment": 1,
+    "question_type": "matching",
+    "prompt": "[Unit IV Assessment] Match each ACID property to its exact guarantee:",
+    "payload_json": "{\"pairs\":[{\"left\":\"Atomicity\",\"right\":\"All operations succeed or all roll back\"},{\"left\":\"Consistency\",\"right\":\"All schema invariants remain valid\"},{\"left\":\"Isolation\",\"right\":\"Concurrent transactions do not corrupt each other\"},{\"left\":\"Durability\",\"right\":\"Committed writes survive crashes\"}]}",
+    "explanation": "ACID ensures trustworthy transaction management."
+  }
+]

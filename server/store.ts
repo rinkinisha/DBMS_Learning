@@ -1,5 +1,10 @@
 import { MongoClient } from 'mongodb';
-import { getDatabases, resetPracticeDb as resetPracticeSqliteDb } from './db.ts';
+import {
+  getDatabases,
+  getPracticeDatabaseForStudent,
+  resetPracticeDb as resetPracticeSqliteDb,
+  savePracticeDatabaseForStudent,
+} from './db.ts';
 import { MongoDataStore } from './mongoStore.ts';
 import { SqliteDataStore } from './sqliteStore.ts';
 import type { DataStore } from './storeTypes.ts';
@@ -101,11 +106,15 @@ export async function getStore(): Promise<DataStore> {
   return storePromise;
 }
 
-export async function getPracticeDatabase() {
-  const { practiceDb } = await getDatabases();
-  return practiceDb;
+export async function getPracticeDatabase(studentId: number) {
+  await getDatabases();
+  return getPracticeDatabaseForStudent(studentId);
 }
 
-export function resetPracticeDatabase() {
-  return resetPracticeSqliteDb();
+export function savePracticeDatabase(studentId: number) {
+  savePracticeDatabaseForStudent(studentId);
+}
+
+export function resetPracticeDatabase(studentId: number) {
+  return resetPracticeSqliteDb(studentId);
 }

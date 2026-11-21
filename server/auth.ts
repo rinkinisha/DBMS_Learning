@@ -157,6 +157,7 @@ export function sanitizeUserForClient(user: AuthStudentRow) {
     role: user.role,
     is_demo: Boolean(user.is_demo),
     timezone: user.timezone || 'Asia/Kolkata',
+    discord_user_id: user.discord_user_id || null,
     sql_solved_count: user.sql_solved_count ?? 0,
     created_at: user.created_at,
   };

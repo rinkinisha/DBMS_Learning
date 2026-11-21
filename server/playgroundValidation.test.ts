@@ -2,14 +2,38 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import initSqlJs from 'sql.js';
 import { databaseStateFingerprint, normalizedQueryResult, validateSqlAnswer, validateTheoryAnswer } from './playgroundValidation.ts';
+import { normalizeChoiceQuestion } from './groqService.ts';
 
 test('backend checks each theory answer format against the stored answer key', () => {
   assert.equal(validateTheoryAnswer('mcq', { correctIndex: 2 }, { selectedIndex: 2 }), true);
   assert.equal(validateTheoryAnswer('mcq', { correctIndex: 0 }, null), false);
+  assert.equal(validateTheoryAnswer('mcq', { options: ['wrong', 'right'], correctAnswer: 'right' }, { selectedIndex: 1 }), true);
+  assert.equal(validateTheoryAnswer('mcq', { options: ['right', 'wrong'], correctAnswer: 'right' }, { selectedIndex: 1 }), false);
   assert.equal(validateTheoryAnswer('scenario', { correctIndex: 1 }, { selectedIndex: 0 }), false);
   assert.equal(validateTheoryAnswer('true_false', { correctBoolean: true }, { value: true }), true);
   assert.equal(validateTheoryAnswer('fill_blank', { acceptedAnswers: ['data redundancy'] }, { value: ' Data   Redundancy! ' }), true);
   assert.equal(validateTheoryAnswer('matching', { pairs: [{ left: 'PK', right: 'Unique row identifier' }] }, { pairs: { PK: 'Unique row identifier' } }), true);
+});
+
+test('AI MCQs require a trusted HTTPS source and an exact answer value/index match', () => {
+  const valid = {
+    prompt: 'Which clause filters rows?',
+    options: ['WHERE', 'ORDER BY', 'LIMIT', 'JOIN'],
+    correctAnswer: 'WHERE',
+    correctIndex: 0,
+    explanation: 'WHERE applies a predicate to rows.',
+    sourceTitle: 'SQLite SELECT',
+    sourceUrl: 'https://www.sqlite.org/lang_select.html',
+  };
+  const normalized = normalizeChoiceQuestion(valid);
+  assert.equal(normalized?.correctAnswer, 'WHERE');
+  assert.equal(normalized?.correctIndex, 0);
+  const repairedIndex = normalizeChoiceQuestion({ ...valid, correctIndex: 1 });
+  assert.equal(repairedIndex?.correctAnswer, 'WHERE');
+  assert.equal(repairedIndex?.correctIndex, 0);
+  const normalizedText = normalizeChoiceQuestion({ ...valid, correctAnswer: ' where   ' });
+  assert.equal(normalizedText?.correctAnswer, 'WHERE');
+  assert.equal(normalizeChoiceQuestion({ ...valid, sourceUrl: 'https://example.com/sql' }), null);
 });
 
 test('backend SQL checker accepts the reference result and rejects invalid or different SQL', async () => {
